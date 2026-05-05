@@ -1,28 +1,52 @@
 """
 kinect_sensor.py — Camada de Hardware: Captura de Nuvem de Pontos
 ==================================================================
-Projeto Final de Curso — Engenharia de Computação (AMAN, 2026)
+Projeto Final de Curso — Engenharia de Computação / Eletrônica / Cartográfica
+Instituto Militar de Engenharia (IME) — 2026
 
-Encapsula toda a comunicação com o sensor Microsoft Kinect v1/v2
-(via Open3D ou freenect) e implementa **fallback automático**
-para um simulador sintético caso o hardware não esteja conectado.
+Encapsula toda a comunicação com o sensor Microsoft Kinect v2
+(via PyKinect2 — SDK oficial Microsoft) e implementa **fallback automático**
+em cascata para modos alternativos caso o hardware não esteja disponível.
 
-Padrão de projeto
------------------
-*Strategy + Fallback*: o construtor tenta inicializar o sensor real.
-Se falhar, troca transparentemente para um gerador de nuvens sintéticas.
-O restante do sistema consome a mesma interface e **nunca quebra por
-falta de hardware** — requisito crítico para a apresentação da banca.
+Cadeia de Fallback
+------------------
+1. **PyKinect2** (Kinect v2 via SDK oficial Microsoft — Windows)  ← PREFERENCIAL
+2. **Open3D**    (Azure Kinect / RealSense)
+3. **freenect**  (Kinect v1 / libfreenect)
+4. **Simulação** (grade persistente + pá virtual via mouse)
+
+Parâmetros intrínsecos do Kinect v2 (sensor de profundidade IR)
+---------------------------------------------------------------
+- Resolução:  512 × 424 px
+- fx = 367.35,  fy = 367.35
+- cx = 260.00,  cy = 205.00
+- Faixa útil:   0.5 m – 4.5 m
+- Saída SDK:    milímetros (uint16)
 
 Classes
 -------
 KinectSensor
-    Interface única de captura: ``capturar_nuvem()`` retorna
-    ``np.ndarray (N, 3)`` e ``capturar_profundidade()`` retorna
-    ``np.ndarray (480, 640)``.
+    Interface única de captura: ``capturar_nuvem()`` → ``np.ndarray (N, 3)``
+    e ``capturar_profundidade()`` → ``np.ndarray (H, W)`` em mm.
 """
 
 from __future__ import annotations
+
+# ── Configuração do PATH do SDK Kinect v2 ───────────────────────
+# Deve ser feita ANTES de qualquer import do pykinect2,
+# para que o Windows encontre a Kinect20.dll corretamente.
+import os as _os
+_SDK_PATH = r"C:\Program Files\Microsoft SDKs\Kinect\v2.0_1409"
+_os.environ['PATH'] = (
+    _SDK_PATH + ";" +
+    _SDK_PATH + r"\Redist\amd64" + ";" +
+    _os.environ.get('PATH', '')
+)
+# Python 3.8+ exige add_dll_directory para carregar DLLs externas
+if hasattr(_os, 'add_dll_directory'):
+    _os.add_dll_directory(_SDK_PATH)
+    _os.add_dll_directory(_SDK_PATH + r"\Redist\amd64")
+# ────────────────────────────────────────────────────────────────
 
 import logging
 import time
@@ -41,21 +65,31 @@ logger = logging.getLogger(__name__)
 
 class ModoSensor(Enum):
     """Estado operacional do sensor de profundidade."""
-    REAL_OPEN3D = auto()
-    REAL_FREENECT = auto()
-    SIMULACAO = auto()
+    REAL_PYKINECT2 = auto()   # Kinect v2 via SDK Microsoft (Windows)
+    REAL_OPEN3D    = auto()   # Azure Kinect / RealSense via Open3D
+    REAL_FREENECT  = auto()   # Kinect v1 via libfreenect
+    SIMULACAO      = auto()   # Nuvem sintética + pá virtual
 
 
 # ======================================================================
-# Constantes do Kinect v1
+# Parâmetros intrínsecos dos sensores
 # ======================================================================
 
-_KINECT_LARGURA: int = 640
-_KINECT_ALTURA: int = 480
-_KINECT_FX: float = 525.0
-_KINECT_FY: float = 525.0
-_KINECT_CX: float = 319.5
-_KINECT_CY: float = 239.5
+# --- Kinect v2 (profundidade IR, 512×424) ---
+_K2_LARGURA: int   = 512
+_K2_ALTURA:  int   = 424
+_K2_FX:      float = 367.35
+_K2_FY:      float = 367.35
+_K2_CX:      float = 260.00
+_K2_CY:      float = 205.00
+
+# --- Kinect v1 (profundidade, 640×480) ---
+_K1_LARGURA: int   = 640
+_K1_ALTURA:  int   = 480
+_K1_FX:      float = 525.0
+_K1_FY:      float = 525.0
+_K1_CX:      float = 319.5
+_K1_CY:      float = 239.5
 
 
 # ======================================================================
@@ -63,152 +97,182 @@ _KINECT_CY: float = 239.5
 # ======================================================================
 
 class KinectSensor:
-    """Captura nuvens de pontos 3D de um sensor Kinect ou de uma simulação.
+    """Captura nuvens de pontos 3D de um Kinect v2 (ou fallback).
 
-    O construtor tenta, nesta ordem:
+    O construtor tenta, em ordem:
 
-    1. Abrir o Kinect via **Open3D** (``o3d.io.AzureKinectSensor``
-       ou ``o3d.io.RealSenseSensor`` para Kinect v2 / Azure).
-    2. Abrir o Kinect via **freenect** (Kinect v1 / libfreenect).
-    3. Se ambos falharem, entrar em **Modo Simulação** gerando
-       nuvens sintéticas com estado persistente de areia.
+    1. **PyKinect2** — SDK oficial Microsoft para Kinect v2 (Windows 10/11).
+       Requer ``pip install pykinect2`` e o Kinect for Windows SDK v2 instalado.
+    2. **Open3D** — Azure Kinect / Intel RealSense.
+    3. **freenect** — Kinect v1 via libfreenect.
+    4. **Simulação** — grade persistente de alturas em memória.
 
-    **Simulação Interativa**: em modo simulação, a classe mantém uma
-    grade NumPy de alturas (``_grade_areia``) que começa em 0.15 m
-    (areia nivelada). O método ``modificar_areia()`` permite cavar
-    ou preencher com decaimento Gaussiano, simulando interação
-    física via mouse.
+    A interface pública é idêntica em todos os modos: o restante do
+    sistema *nunca* precisa saber qual modo está ativo.
 
     Parameters
     ----------
     forcar_simulacao : bool
-        Se ``True``, ignora o hardware e entra direto em simulação.
-        Útil para testes e desenvolvimento.
-    resolucao : tuple[int, int]
-        ``(largura, altura)`` da imagem de profundidade.
-        Padrão: ``(640, 480)`` (Kinect v1).
+        Pula o hardware e entra direto em simulação (útil para debug).
     resolucao_grade_sim : int
-        Número de pontos por eixo na grade de simulação.
-        Padrão: 50 (gera 2500 pontos na nuvem).
+        Pontos por eixo na grade de simulação (padrão: 50).
     largura_mesa : float
         Dimensão X da mesa em metros (padrão: 1.50).
     comprimento_mesa : float
         Dimensão Y da mesa em metros (padrão: 1.50).
     altura_max_areia : float
-        Altura máxima da areia em metros (padrão: 0.30).
+        Altura máxima de areia em metros (padrão: 0.30).
 
     Attributes
     ----------
     modo : ModoSensor
-        Estado operacional atual do sensor.
+        Estado operacional atual.
     resolucao : tuple[int, int]
-        Resolução do mapa de profundidade.
-
-    Examples
-    --------
-    >>> sensor = KinectSensor()
-    >>> nuvem = sensor.capturar_nuvem()       # (N, 3) float64
-    >>> prof = sensor.capturar_profundidade()  # (480, 640) uint16
-    >>> sensor.modificar_areia(0.75, 0.75, cavar=True)  # cava no centro
+        ``(largura, altura)`` do mapa de profundidade.
     """
 
     def __init__(
         self,
-        forcar_simulacao: bool = False,
-        resolucao: Tuple[int, int] = (_KINECT_LARGURA, _KINECT_ALTURA),
-        resolucao_grade_sim: int = 50,
-        largura_mesa: float = 1.50,
-        comprimento_mesa: float = 1.50,
-        altura_max_areia: float = 0.30,
+        forcar_simulacao:     bool  = False,
+        resolucao_grade_sim:  int   = 50,
+        largura_mesa:         float = 1.50,
+        comprimento_mesa:     float = 1.50,
+        altura_max_areia:     float = 0.30,
     ) -> None:
-        self.resolucao: Tuple[int, int] = resolucao
-        self.modo: ModoSensor = ModoSensor.SIMULACAO
 
-        # Dimensões da mesa (usadas na simulação interativa)
-        self._largura_mesa = largura_mesa
-        self._comprimento_mesa = comprimento_mesa
-        self._altura_max_areia = altura_max_areia
+        self.modo: ModoSensor = ModoSensor.SIMULACAO
+        # Resolução padrão; será atualizada pelo driver que conectar
+        self.resolucao: Tuple[int, int] = (_K1_LARGURA, _K1_ALTURA)
+
+        # Dimensões físicas da mesa
+        self._largura_mesa      = largura_mesa
+        self._comprimento_mesa  = comprimento_mesa
+        self._altura_max_areia  = altura_max_areia
         self._resolucao_grade_sim = resolucao_grade_sim
 
-        # Grade persistente de alturas da areia (modo simulação)
-        # Inicializada em 0.15 m = metade da altura máxima (0.30 m)
-        self._grade_areia: Optional[np.ndarray] = None
-        self._eixo_x_sim: Optional[np.ndarray] = None
-        self._eixo_y_sim: Optional[np.ndarray] = None
+        # Grade persistente de alturas (modo simulação)
+        self._grade_areia:  Optional[np.ndarray] = None
+        self._eixo_x_sim:   Optional[np.ndarray] = None
+        self._eixo_y_sim:   Optional[np.ndarray] = None
 
-        # Referências para drivers reais (populadas se disponíveis)
-        self._o3d_sensor = None
-        self._freenect_mod = None
+        # Referências para drivers reais
+        self._pykinect2_kinect  = None   # objeto PyKinectRuntime
+        self._pykinect2_mod     = None   # módulo pykinect2.PyKinectV2
+        self._o3d_sensor        = None
+        self._freenect_mod      = None
+
+        # Parâmetros intrínsecos ativos (atualizados pelo driver)
+        self._fx: float = _K1_FX
+        self._fy: float = _K1_FY
+        self._cx: float = _K1_CX
+        self._cy: float = _K1_CY
 
         if forcar_simulacao:
-            logger.warning(
-                "KinectSensor: forcar_simulacao=True — Modo Simulação ativado."
-            )
-            print("[KinectSensor] ⚠ Modo Simulação forçado pelo usuário.")
+            logger.warning("KinectSensor: forcar_simulacao=True — Modo Simulação.")
+            print("[KinectSensor] ⚠  Modo Simulação forçado pelo usuário.")
             self._inicializar_grade_simulacao()
             return
 
-        # --- Tentativa 1: Open3D ---
+        # Cadeia de fallback
+        if self._tentar_pykinect2():
+            return
         if self._tentar_open3d():
             return
-
-        # --- Tentativa 2: freenect (Kinect v1) ---
         if self._tentar_freenect():
             return
 
-        # --- Fallback: simulação ---
-        logger.warning(
-            "KinectSensor: nenhum sensor detectado — entrando em Modo Simulação."
-        )
-        print("[KinectSensor] ⚠ Aviso: Nenhum sensor Kinect detectado.")
-        print("[KinectSensor]   Entrando em MODO SIMULAÇÃO (nuvem sintética).")
+        # Fallback final: simulação
+        logger.warning("KinectSensor: nenhum sensor detectado — Modo Simulação.")
+        print("[KinectSensor] ⚠  Nenhum sensor Kinect detectado.")
+        print("[KinectSensor]    Entrando em MODO SIMULAÇÃO (nuvem sintética).")
         self._inicializar_grade_simulacao()
 
     # ------------------------------------------------------------------
     # Inicialização de drivers
     # ------------------------------------------------------------------
 
-    def _tentar_open3d(self) -> bool:
-        """Tenta abrir o Kinect via Open3D.
+    def _tentar_pykinect2(self) -> bool:
+        """Tenta abrir o Kinect v2 via PyKinect2 (SDK Microsoft).
+
+        Requer:
+        - Kinect for Windows SDK 2.0 instalado
+          (https://www.microsoft.com/en-us/download/details.aspx?id=44561)
+        - ``pip install pykinect2``
+        - Windows 10 ou 11 (64-bit)
+        - USB 3.0 nativo (não hub)
 
         Returns
         -------
         bool
-            ``True`` se o sensor Open3D foi inicializado com sucesso.
+            True se a conexão foi bem-sucedida.
         """
         try:
-            import open3d as o3d  # noqa: F811
+            # Importações do SDK Microsoft via PyKinect2
+            from pykinect2 import PyKinectV2
+            from pykinect2.PyKinectRuntime import PyKinectRuntime
 
-            # Verificar se há dispositivos de captura disponíveis
-            # Open3D suporta RealSense e Azure Kinect; tratamos ambos.
-            # Como não há API simples de listagem universal,
-            # tentamos criar o sensor e ler um frame de teste.
+            # Abre o stream de profundidade (FrameSourceTypes_Depth = 8)
+            kinect = PyKinectRuntime(PyKinectV2.FrameSourceTypes_Depth)
+
+            # Aguarda até 3 s para o primeiro frame chegar
+            # (o Kinect v2 precisa de ~1-2 s para inicializar)
+            deadline = time.time() + 3.0
+            frame_ok = False
+            while time.time() < deadline:
+                if kinect.has_new_depth_frame():
+                    frame = kinect.get_last_depth_frame()
+                    if frame is not None and np.any(frame > 0):
+                        frame_ok = True
+                        break
+                time.sleep(0.05)
+
+            if not frame_ok:
+                kinect.close()
+                logger.debug("PyKinect2: sensor abriu mas nenhum frame válido.")
+                return False
+
+            self._pykinect2_kinect = kinect
+            self._pykinect2_mod    = PyKinectV2
+            self.modo      = ModoSensor.REAL_PYKINECT2
+            self.resolucao = (_K2_LARGURA, _K2_ALTURA)
+            self._fx, self._fy = _K2_FX, _K2_FY
+            self._cx, self._cy = _K2_CX, _K2_CY
+
+            logger.info("KinectSensor: PyKinect2 — Kinect v2 conectado (512×424).")
+            print("[KinectSensor] ✓ Kinect v2 detectado via PyKinect2 (SDK Microsoft).")
+            print(f"[KinectSensor]   Resolução de profundidade: {_K2_LARGURA}×{_K2_ALTURA} px")
+            return True
+
+        except ImportError:
+            logger.debug("PyKinect2 não instalado. Execute: pip install pykinect2")
+        except Exception as e:
+            logger.debug("PyKinect2 falhou: %s", e)
+        return False
+
+    def _tentar_open3d(self) -> bool:
+        """Tenta abrir via Open3D (Azure Kinect / RealSense)."""
+        try:
+            import open3d as o3d
             sensor_config = o3d.io.AzureKinectSensorConfig()
             sensor = o3d.io.AzureKinectSensor(sensor_config)
             if sensor.connect(0):
                 self._o3d_sensor = sensor
-                self.modo = ModoSensor.REAL_OPEN3D
+                self.modo        = ModoSensor.REAL_OPEN3D
                 logger.info("KinectSensor: Open3D Azure Kinect conectado.")
-                print("[KinectSensor] ✓ Kinect detectado via Open3D (Azure).")
+                print("[KinectSensor] ✓ Kinect detectado via Open3D.")
                 return True
         except Exception as e:
-            logger.debug("Open3D Kinect indisponível: %s", e)
+            logger.debug("Open3D indisponível: %s", e)
         return False
 
     def _tentar_freenect(self) -> bool:
-        """Tenta abrir o Kinect v1 via libfreenect.
-
-        Returns
-        -------
-        bool
-            ``True`` se ``freenect.sync_get_depth()`` funcionou.
-        """
+        """Tenta abrir o Kinect v1 via libfreenect."""
         try:
             import freenect
             prof, _ = freenect.sync_get_depth()
             if prof is not None:
                 self._freenect_mod = freenect
-                self.modo = ModoSensor.REAL_FREENECT
+                self.modo          = ModoSensor.REAL_FREENECT
                 logger.info("KinectSensor: freenect (Kinect v1) conectado.")
                 print("[KinectSensor] ✓ Kinect v1 detectado via freenect.")
                 return True
@@ -222,43 +286,85 @@ class KinectSensor:
 
     @property
     def esta_simulando(self) -> bool:
-        """``True`` se o sensor está em modo simulação."""
+        """True se o sensor está em modo simulação."""
         return self.modo == ModoSensor.SIMULACAO
 
     @property
     def intrinsicos(self) -> dict:
-        """Parâmetros intrínsecos padrão do Kinect v1.
+        """Parâmetros intrínsecos do sensor ativo.
 
         Returns
         -------
         dict
-            Chaves: ``fx``, ``fy``, ``cx``, ``cy``.
+            Chaves: ``fx``, ``fy``, ``cx``, ``cy``, ``largura``, ``altura``.
         """
+        w, h = self.resolucao
         return {
-            "fx": _KINECT_FX, "fy": _KINECT_FY,
-            "cx": _KINECT_CX, "cy": _KINECT_CY,
+            "fx": self._fx, "fy": self._fy,
+            "cx": self._cx, "cy": self._cy,
+            "largura": w,   "altura": h,
         }
 
     # ------------------------------------------------------------------
-    # Captura: mapa de profundidade (480×640)
+    # Captura: mapa de profundidade (H × W, mm, uint16)
     # ------------------------------------------------------------------
 
     def capturar_profundidade(self) -> np.ndarray:
-        """Retorna um mapa de profundidade ``(H, W)`` em milímetros (uint16).
+        """Retorna mapa de profundidade ``(H, W)`` em milímetros (uint16).
 
         Returns
         -------
         np.ndarray, shape (H, W), dtype uint16
-            Mapa de profundidade em milímetros.
         """
+        if self.modo == ModoSensor.REAL_PYKINECT2:
+            return self._profundidade_pykinect2()
         if self.modo == ModoSensor.REAL_FREENECT:
             return self._profundidade_freenect()
         if self.modo == ModoSensor.REAL_OPEN3D:
             return self._profundidade_open3d()
         return self._profundidade_simulada()
 
+    def _profundidade_pykinect2(self) -> np.ndarray:
+        """Captura frame de profundidade do Kinect v2 via PyKinect2.
+
+        O SDK retorna um array 1-D de uint16 com 512×424 = 217.088
+        valores em milímetros.  Fazemos reshape para (424, 512).
+
+        Returns
+        -------
+        np.ndarray, shape (424, 512), dtype uint16
+        """
+        kinect = self._pykinect2_kinect
+
+        # Aguarda novo frame (timeout: 100 ms → devolve último frame válido)
+        deadline = time.time() + 0.10
+        while not kinect.has_new_depth_frame():
+            if time.time() > deadline:
+                logger.debug("PyKinect2: timeout aguardando frame.")
+                break
+            time.sleep(0.005)
+
+        frame = kinect.get_last_depth_frame()
+        if frame is None:
+            logger.warning("PyKinect2: frame None, retornando zeros.")
+            return np.zeros((_K2_ALTURA, _K2_LARGURA), dtype=np.uint16)
+
+        # get_last_depth_frame() retorna ctypes array 1-D
+        # Converte para numpy e faz reshape
+        arr = np.frombuffer(frame, dtype=np.uint16).copy()
+
+        expected = _K2_LARGURA * _K2_ALTURA  # 512 * 424 = 217.088
+        if arr.size != expected:
+            logger.warning(
+                "PyKinect2: tamanho inesperado %d (esperado %d). Zeros.",
+                arr.size, expected
+            )
+            return np.zeros((_K2_ALTURA, _K2_LARGURA), dtype=np.uint16)
+
+        return arr.reshape(_K2_ALTURA, _K2_LARGURA)
+
     def _profundidade_freenect(self) -> np.ndarray:
-        """Captura via libfreenect."""
+        """Captura via libfreenect (Kinect v1)."""
         prof, _ = self._freenect_mod.sync_get_depth()
         return np.asarray(prof, dtype=np.uint16)
 
@@ -267,56 +373,56 @@ class KinectSensor:
         import open3d as o3d
         rgbd = self._o3d_sensor.capture_frame(True)
         if rgbd is None:
-            logger.warning("Open3D: frame vazio, retornando simulação.")
+            logger.warning("Open3D: frame vazio — retornando simulação.")
             return self._profundidade_simulada()
-        depth = np.asarray(rgbd.depth)
-        return depth.astype(np.uint16)
+        return np.asarray(rgbd.depth).astype(np.uint16)
 
     def _profundidade_simulada(self) -> np.ndarray:
-        """Gera um mapa de profundidade sintético (colina gaussiana + ruído).
+        """Mapa de profundidade sintético baseado na grade persistente.
 
-        Simula o sensor montado a 2,5 m da mesa.  A profundidade base
-        é **2500 mm** e a colina central varia no tempo para simular
-        uma "mão movendo a areia" (até ~300 mm de amplitude, compatível
-        com ``ALTURA_MAX_AREIA = 0.30 m``).
+        Converte as alturas da grade de areia em profundidades simulando
+        o Kinect montado a 2.5 m acima da mesa.
 
         Returns
         -------
         np.ndarray, shape (480, 640), dtype uint16
         """
-        w, h = self.resolucao
-        # Kinect montado a 2,5 m → profundidade base = 2500 mm
-        profundidade = np.full((h, w), 2500, dtype=np.float32)
+        w, h = _K1_LARGURA, _K1_ALTURA  # resolução simulada
 
-        u = np.arange(w)
-        v = np.arange(h)
-        uu, vv = np.meshgrid(u, v)
+        if self._grade_areia is None:
+            return np.full((h, w), 2500, dtype=np.uint16)
 
-        # Colina gaussiana no centro — leve oscilação temporal
-        fase = time.time() % (2 * np.pi)
-        amp = 200 + 30 * np.sin(fase)
-        colina = amp * np.exp(
-            -(((uu - w // 2) ** 2) / (2 * 160 ** 2)
-              + ((vv - h // 2) ** 2) / (2 * 160 ** 2))
+        res = self._resolucao_grade_sim
+
+        # Interpola a grade de areia para a resolução da janela
+        grade_norm = cv2.resize(
+            self._grade_areia.astype(np.float32),
+            (w, h),
+            interpolation=cv2.INTER_LINEAR,
         )
-        profundidade -= colina
 
-        # Ruído gaussiano para simular o sensor real
+        # Kinect a 2500 mm → profundidade = 2500 - altura_em_mm
+        altura_mm = (grade_norm * 1000.0).astype(np.float32)
+        profundidade = np.clip(2500.0 - altura_mm, 1800.0, 3000.0)
+
+        # Ruído gaussiano ~3 mm (realístico para o sensor)
         ruido = np.random.normal(0, 3, profundidade.shape).astype(np.float32)
-        profundidade += ruido
 
-        return np.clip(profundidade, 0, 65535).astype(np.uint16)
+        return np.clip(profundidade + ruido, 0, 65535).astype(np.uint16)
 
     # ------------------------------------------------------------------
     # Captura: nuvem de pontos 3D (N, 3)
     # ------------------------------------------------------------------
 
     def capturar_nuvem(self) -> np.ndarray:
-        """Retorna uma nuvem de pontos 3D ``(N, 3)``.
+        """Retorna nuvem de pontos 3D ``(N, 3)`` em coordenadas da câmera.
 
-        No modo real, cada linha contém ``[u_pixel, v_pixel, profundidade_mm]``.
-        No modo simulação, retorna pontos já em coordenadas da mesa
-        ``[x_m, y_m, z_m]`` com um plano reto em Z = 0.15 m.
+        No modo real, cada ponto é ``[X_m, Y_m, Z_m]`` em metros no
+        referencial do sensor, calculado via back-projection pinhole usando
+        os parâmetros intrínsecos do Kinect v2.
+
+        No modo simulação, os pontos já vêm em coordenadas da mesa
+        ``[x_m, y_m, z_m]`` diretamente da grade persistente.
 
         Returns
         -------
@@ -324,65 +430,105 @@ class KinectSensor:
         """
         if self.modo == ModoSensor.SIMULACAO:
             return self._nuvem_simulada_mesa()
+
         profundidade = self.capturar_profundidade()
-        return self.profundidade_para_pontos(profundidade)
+        return self._profundidade_para_xyzm(profundidade)
+
+    def _profundidade_para_xyzm(self, profundidade: np.ndarray) -> np.ndarray:
+        """Converte mapa de profundidade em nuvem de pontos 3D (metros).
+
+        Aplica back-projection pinhole usando os intrínsecos do sensor ativo:
+
+            X = (u - cx) * Z / fx
+            Y = (v - cy) * Z / fy
+            Z = profundidade_mm / 1000.0
+
+        Filtra pixels com Z = 0 (sem retorno) e Z > 4.5 m (fora da faixa).
+
+        Parameters
+        ----------
+        profundidade : np.ndarray, shape (H, W), dtype uint16
+            Mapa de profundidade em milímetros.
+
+        Returns
+        -------
+        np.ndarray, shape (N, 3), dtype float64
+            Pontos [X, Y, Z] em metros no referencial do sensor.
+        """
+        h, w = profundidade.shape
+
+        # Índices de pixel para todos os pontos
+        v_idx, u_idx = np.indices((h, w))
+
+        # Profundidade em metros
+        Z = profundidade.astype(np.float64) / 1000.0
+
+        # Máscara: descarta pixels sem retorno e além de 4.5 m
+        mascara = (Z > 0.3) & (Z < 4.5)
+
+        Z_m = Z[mascara]
+        u_m = u_idx[mascara].astype(np.float64)
+        v_m = v_idx[mascara].astype(np.float64)
+
+        X_m = (u_m - self._cx) * Z_m / self._fx
+        Y_m = (v_m - self._cy) * Z_m / self._fy
+
+        return np.column_stack([X_m, Y_m, Z_m])
+
+    # ------------------------------------------------------------------
+    # Simulação interativa — grade persistente de areia
+    # ------------------------------------------------------------------
 
     def _inicializar_grade_simulacao(self) -> None:
         """Cria a grade persistente de alturas para o modo simulação.
 
-        A grade tem ``resolucao_grade_sim × resolucao_grade_sim`` pontos
-        cobrindo a mesa inteira, todos inicializados em 0.15 m
-        (metade da altura máxima de areia).
+        Grid ``RxR`` cobrindo a mesa, inicializado em 0.15 m (metade
+        da altura máxima de 0.30 m).
         """
         res = self._resolucao_grade_sim
-        self._eixo_x_sim = np.linspace(0.0, self._largura_mesa, res)
+        self._eixo_x_sim = np.linspace(0.0, self._largura_mesa,     res)
         self._eixo_y_sim = np.linspace(0.0, self._comprimento_mesa, res)
         self._grade_areia = np.full(
-            (res, res), self._altura_max_areia / 2.0, dtype=np.float64
+            (res, res),
+            self._altura_max_areia / 2.0,
+            dtype=np.float64,
         )
-        print(f"[KinectSensor] Grade de simulação: {res}×{res}, "
-              f"Z inicial = {self._altura_max_areia / 2.0:.2f} m")
+        print(
+            f"[KinectSensor] Grade de simulação: {res}×{res}, "
+            f"Z inicial = {self._altura_max_areia / 2.0:.2f} m"
+        )
 
     def modificar_areia(
         self,
-        x: float,
-        y: float,
-        cavar: bool = True,
-        raio: float = 0.10,
+        x:          float,
+        y:          float,
+        cavar:      bool  = True,
+        raio:       float = 0.10,
         intensidade: float = 0.008,
     ) -> None:
-        """Cava ou preenche a areia virtual com decaimento Gaussiano.
+        """Cava ou preenche a areia virtual com perfil Gaussiano 2D.
 
-        Simula a interação física do usuário com a areia.  O efeito
-        é centrado em ``(x, y)`` com um perfil Gaussiano de largura
-        ``raio`` (em metros).  Chamadas repetidas (arrastar o mouse)
-        acumulam o efeito frame a frame.
+        Só tem efeito em modo simulação.  Chamadas repetidas (arrastar
+        o mouse) acumulam o efeito frame a frame.
 
         Parameters
         ----------
-        x : float
-            Coordenada X na mesa (metros).
-        y : float
-            Coordenada Y na mesa (metros).
+        x, y : float
+            Coordenadas do centro de ação na mesa (metros).
         cavar : bool
-            Se ``True``, diminui Z (cavar). Se ``False``, aumenta Z
-            (colocar areia).
+            True → diminui Z (cavar).  False → aumenta Z (preencher).
         raio : float
-            Raio de ação em metros (padrão: 0.10 m = 10 cm).
+            Raio de ação em metros (padrão: 0.10 m).
         intensidade : float
-            Deslocamento máximo por chamada no centro do pincel
-            (padrão: 0.008 m ≈ 8 mm).
+            Deslocamento máximo por chamada (padrão: 0.008 m = 8 mm).
         """
         if self._grade_areia is None:
             return
 
         xx, yy = np.meshgrid(self._eixo_x_sim, self._eixo_y_sim)
+        dist2  = (xx - x) ** 2 + (yy - y) ** 2
+        sigma2 = (raio / 2.0) ** 2
 
-        # Distância ao centro do clique
-        dist2 = (xx - x) ** 2 + (yy - y) ** 2
-        sigma2 = (raio / 2.0) ** 2  # sigma = raio/2 → 95% do efeito dentro do raio
-
-        # Perfil Gaussiano
         delta = intensidade * np.exp(-dist2 / (2.0 * sigma2))
 
         if cavar:
@@ -390,19 +536,11 @@ class KinectSensor:
         else:
             self._grade_areia += delta
 
-        # Limitar ao intervalo físico [0, altura_max_areia]
-        np.clip(self._grade_areia, 0.0, self._altura_max_areia, out=self._grade_areia)
+        np.clip(self._grade_areia, 0.0, self._altura_max_areia,
+                out=self._grade_areia)
 
     def _nuvem_simulada_mesa(self) -> np.ndarray:
-        """Gera nuvem de pontos simulada a partir da grade persistente de areia.
-
-        Retorna a nuvem com as alturas atuais (potencialmente modificadas
-        por ``modificar_areia``), já em coordenadas da mesa.
-
-        Returns
-        -------
-        np.ndarray, shape (N, 3), dtype float64
-        """
+        """Nuvem de pontos a partir da grade persistente (coordenadas da mesa)."""
         xx, yy = np.meshgrid(self._eixo_x_sim, self._eixo_y_sim)
         return np.column_stack([
             xx.ravel(),
@@ -410,36 +548,13 @@ class KinectSensor:
             self._grade_areia.ravel(),
         ])
 
-    @staticmethod
-    def profundidade_para_pontos(profundidade: np.ndarray) -> np.ndarray:
-        """Converte mapa de profundidade ``(H, W)`` em array ``(N, 3)``.
-
-        Parameters
-        ----------
-        profundidade : np.ndarray, shape (H, W)
-            Mapa de profundidade.
-
-        Returns
-        -------
-        np.ndarray, shape (N, 3), dtype float64
-            Array com colunas ``[u, v, d]``, filtrado para ``d > 0``.
-        """
-        v_idx, u_idx = np.indices(profundidade.shape)
-        pontos = np.stack([
-            u_idx.flatten(),
-            v_idx.flatten(),
-            profundidade.flatten(),
-        ], axis=1).astype(np.float64)
-
-        return pontos[pontos[:, 2] > 0]
-
     # ------------------------------------------------------------------
-    # Imagem colorida para exibição de debug
+    # Utilitários estáticos
     # ------------------------------------------------------------------
 
     @staticmethod
     def profundidade_para_imagem(profundidade: np.ndarray) -> np.ndarray:
-        """Normaliza e aplica colormap ao mapa de profundidade.
+        """Normaliza e aplica colormap TURBO ao mapa de profundidade.
 
         Parameters
         ----------
@@ -447,23 +562,60 @@ class KinectSensor:
 
         Returns
         -------
-        np.ndarray, shape (H, W, 3), dtype uint8
-            Imagem BGR com colormap TURBO.
+        np.ndarray, shape (H, W, 3), dtype uint8  — BGR
         """
         norm = cv2.normalize(profundidade, None, 0, 255, cv2.NORM_MINMAX)
         return cv2.applyColorMap(norm.astype(np.uint8), cv2.COLORMAP_TURBO)
 
-    # ------------------------------------------------------------------
-    # Contexto
-    # ------------------------------------------------------------------
+    @staticmethod
+    def profundidade_para_pontos(profundidade: np.ndarray) -> np.ndarray:
+        """Converte mapa de profundidade em array ``(N, 3)`` bruto ``[u,v,d]``.
 
-    def __repr__(self) -> str:
-        return f"KinectSensor(modo={self.modo.name}, resolucao={self.resolucao})"
+        Mantido por compatibilidade com o código legado.
+        Prefira ``capturar_nuvem()`` para nuvem calibrada em metros.
+
+        Returns
+        -------
+        np.ndarray, shape (N, 3), dtype float64  — [u_px, v_px, d_mm]
+        """
+        v_idx, u_idx = np.indices(profundidade.shape)
+        pontos = np.stack(
+            [u_idx.flatten(), v_idx.flatten(), profundidade.flatten()],
+            axis=1,
+        ).astype(np.float64)
+        return pontos[pontos[:, 2] > 0]
+
+    # ------------------------------------------------------------------
+    # Contexto e ciclo de vida
+    # ------------------------------------------------------------------
 
     def liberar(self) -> None:
-        """Libera recursos do sensor (se houver)."""
+        """Libera todos os recursos do sensor."""
+        if self._pykinect2_kinect is not None:
+            try:
+                self._pykinect2_kinect.close()
+                print("[KinectSensor] Kinect v2 (PyKinect2) encerrado.")
+            except Exception as e:
+                logger.warning("Erro ao fechar PyKinect2: %s", e)
+            self._pykinect2_kinect = None
+
         if self._o3d_sensor is not None:
             self._o3d_sensor.disconnect()
             self._o3d_sensor = None
+
         self._freenect_mod = None
         logger.info("KinectSensor: recursos liberados.")
+
+    def __repr__(self) -> str:
+        w, h = self.resolucao
+        return (
+            f"KinectSensor(modo={self.modo.name}, "
+            f"resolucao={w}×{h}, "
+            f"fx={self._fx:.1f}, fy={self._fy:.1f})"
+        )
+
+    def __enter__(self) -> "KinectSensor":
+        return self
+
+    def __exit__(self, *_) -> None:
+        self.liberar()
