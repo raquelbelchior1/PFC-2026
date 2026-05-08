@@ -81,19 +81,24 @@ gera uma superfície sintética automaticamente."""
 RESOLUCAO_PROJETOR: tuple[int, int] = (640, 480)
 """``(largura, altura)`` em pixels da janela de projeção."""
 
-TOLERANCIA_COR: float = 0.02
+TOLERANCIA_COR: float = 0.01
+""""0.02"""
 """Tolerância em metros (2 cm) para a classificação Vermelho/Azul/Verde."""
 
-LARGURA_MESA: float = 1.50
+LARGURA_MESA: float = 0.45 
+"""1.50"""
 """Dimensão X da caixa de areia em metros (1,5 m)."""
 
-COMPRIMENTO_MESA: float = 1.50
+COMPRIMENTO_MESA: float = 0.48
+"""1.50"""
 """Dimensão Y da caixa de areia em metros (1,5 m)."""
 
-ALTURA_MAX_AREIA: float = 0.30
+ALTURA_MAX_AREIA: float = 0.08
+"""0.30"""
 """Espessura máxima de areia mapeável em metros (30 cm)."""
 
-ALTURA_KINECT: float = 2.50
+ALTURA_KINECT: float = 0.6
+"""2.50"""
 """Altura de montagem do Kinect acima da mesa, em metros."""
 
 CELULAS_GRADE_X: int = 30
@@ -104,7 +109,7 @@ CELULAS_GRADE_Y: int = 30
 """Número de linhas da grade de discretização (eixo Y).
 Com a mesa de 1,5 m, 30 linhas geram quadrados de 5 cm × 5 cm."""
 
-RAIO_PA_VIRTUAL: float = 0.10
+RAIO_PA_VIRTUAL: float = 0.05
 """Raio de ação da pá virtual (mouse) em metros (10 cm)."""
 
 INTENSIDADE_PA_VIRTUAL: float = 0.008
