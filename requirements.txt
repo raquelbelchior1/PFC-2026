@@ -1,0 +1,23 @@
+# Dependências do AR Sandbox — PFC-2026
+# Instalar com:  pip install -r requirements.txt
+
+# Visão computacional e álgebra linear (obrigatório)
+numpy==2.4.4
+opencv-python==4.13.0.92
+
+# Sensor Kinect v2 via SDK Microsoft (obrigatório no modo real)
+pykinect2==0.1.0
+comtypes==1.4.16
+
+# Leitura de GeoTIFF / MDE (opcional — sem isto usa Morro Gaussiano)
+rasterio==1.5.0
+affine==2.4.0
+attrs==26.1.0
+certifi==2026.4.22
+click==8.3.3
+cligj==0.7.2
+colorama==0.4.6
+pyparsing==3.3.2
+
+# Testes unitários (opcional)
+pytest==9.0.3

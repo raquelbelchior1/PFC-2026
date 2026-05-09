@@ -125,6 +125,7 @@ PFC-2026/
 ├── mde_cartografia.py         # AdaptadorMDE: GeoTIFF + fallback Gaussiano + heatmap
 │
 ├── test_motor_caixao.py       # 26 testes unitários automatizados
+├── requirements.txt           # Dependências Python (pip install -r requirements.txt)
 ├── DOCUMENTACAO_OFICIAL.md    # Documentação acadêmica completa para a banca
 └── README.md                  # Este arquivo
 ```
@@ -133,23 +134,37 @@ PFC-2026/
 
 ## Como Instalar
 
-### Dependências obrigatórias
+### 1. Criar e ativar o ambiente virtual
 
-```bash
-pip install numpy opencv-python
+**Windows (PowerShell):**
+```powershell
+python -m venv kinect_env
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned
+.\kinect_env\Scripts\Activate.ps1
 ```
 
-### Dependências opcionais (GeoTIFF real, interpolação, nuvem RGBD)
-
+**Linux / macOS:**
 ```bash
-pip install rasterio scipy open3d
+python3 -m venv kinect_env
+source kinect_env/bin/activate
 ```
 
-### Testes
+### 2. Instalar todas as dependências
 
 ```bash
-pip install pytest   # opcional, unittest funciona nativamente
+pip install -r requirements.txt
 ```
+
+O `requirements.txt` inclui:
+
+| Pacote | Uso |
+|---|---|
+| `numpy`, `opencv-python` | Álgebra linear e visão computacional — **obrigatório** |
+| `pykinect2`, `comtypes` | Kinect v2 via SDK Microsoft — necessário apenas com hardware real |
+| `rasterio` e dependências | Leitura de GeoTIFF — opcional (sem ele usa Morro Gaussiano sintético) |
+| `pytest` | Testes unitários — opcional |
+
+> **Nota:** o Kinect v2 também requer o [Kinect for Windows SDK v2](https://www.microsoft.com/en-us/download/details.aspx?id=44561) instalado separadamente no Windows.
 
 ---
 
