@@ -20,11 +20,11 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
-    # Versão do Python atualizada para 3.11 para resolver o erro do NumPy
-    - name: Set up Python 3.11
+    # Atualizado para Python 3.12 para suportar o rasterio 1.5.0 e o numpy 2.4.4
+    - name: Set up Python 3.12
       uses: actions/setup-python@v3
       with:
-        python-version: "3.11"
+        python-version: "3.12"
         
     - name: Install dependencies
       run: |
