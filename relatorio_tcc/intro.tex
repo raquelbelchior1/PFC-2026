@@ -1,0 +1,155 @@
+% =====================================================================
+% intro.tex — Capítulo 1: Introdução
+% =====================================================================
+
+\chapter{Introdução}
+\label{cap:intro}
+
+\section{Contexto e Motivação}
+\label{sec:contexto}
+
+A leitura e a interpretação de cartas topográficas constituem competências
+fundamentais para o oficial combatente. A capacidade de visualizar, em três
+dimensões, o relevo de uma região de operações é determinante para o
+planejamento de manobras, o posicionamento de armas de apoio, a escolha de
+itinerários de ataque e a definição de bases de fogo. Tradicionalmente, esse
+treinamento é apoiado por dois recursos complementares: a \textbf{carta
+topográfica em papel}, com curvas de nível, e o \textbf{caixão de areia
+físico}, no qual a turma de instrução modela manualmente o terreno a partir
+da carta para obter uma representação tridimensional tangível.
+
+Embora o caixão de areia seja um instrumento didático consagrado, a
+\emph{transição cognitiva} entre a representação bidimensional da carta
+(curvas de nível) e o relevo tridimensional construído na areia exige
+considerável esforço mental e tempo de instrução. Erros de interpretação
+das curvas de nível resultam em terrenos modelados que divergem da
+realidade cartográfica, comprometendo a fidelidade do exercício.
+
+Os \textbf{Caixões de Areia com Realidade Aumentada}
+(\textit{Augmented Reality Sandboxes} — AR Sandboxes) emergiram, na última
+década, como uma resposta tecnológica a esse problema. Por meio da
+combinação de um \textbf{sensor de profundidade} (tipicamente o
+\textit{Microsoft Kinect}) com um \textbf{projetor multimídia} suspenso
+sobre a caixa, esses sistemas projetam, em tempo real, curvas de nível
+coloridas, escalas batimétricas ou texturas de relevo diretamente sobre a
+superfície da areia. À medida que o operador modifica o relevo — cavando ou
+acumulando areia com as mãos — a projeção se ajusta dinamicamente,
+fornecendo \emph{feedback} visual imediato e dispensando a interpretação
+mental das curvas de nível.
+
+A iniciativa pioneira do projeto \textit{SARndbox}, da Universidade da
+Califórnia em Davis~\cite{sarndbox}, demonstrou a viabilidade técnica da
+abordagem. Adaptações posteriores expandiram o conceito para a educação
+em geociências, hidrologia e cartografia. No contexto militar, entretanto,
+três limitações dos sistemas existentes restringem sua adoção:
+
+\begin{enumerate}
+    \item A maioria dos sistemas projeta apenas \emph{curvas de nível
+          decorativas} ou simulações hidrológicas qualitativas, sem
+          comparação com um relevo de referência específico;
+    \item Não há \emph{guia visual explícito} indicando \emph{onde
+          cavar} ou \emph{onde acumular} areia para reproduzir um terreno
+          alvo determinado pela cartografia oficial;
+    \item As implementações de referência são \emph{frágeis} quanto a
+          falhas de hardware: a ausência do Kinect ou do arquivo de
+          terreno provoca o encerramento abrupto do programa,
+          comprometendo apresentações didáticas e demonstrações.
+\end{enumerate}
+
+\section{Definição do Problema}
+\label{sec:problema}
+
+Diante das limitações expostas, este Projeto Final de Curso propõe a
+seguinte questão de pesquisa:
+
+\begin{quote}
+\itshape
+``Como projetar e implementar um sistema de Realidade Aumentada para
+caixão de areia que (a) compare quantitativamente, em tempo real, o relevo
+modelado com um Modelo Digital de Elevação (MDE) cartográfico de
+referência, (b) forneça \emph{feedback} visual inequívoco indicando onde
+adicionar ou remover areia para minimizar essa diferença, e (c) opere de
+forma resiliente, sem qualquer falha catastrófica, mesmo na ausência do
+sensor de profundidade ou do arquivo de terreno?''
+\end{quote}
+
+\section{Objetivos}
+\label{sec:objetivos}
+
+\subsection{Objetivo geral}
+\label{subsec:obj-geral}
+
+Desenvolver um sistema funcional de Caixão de Areia com Realidade
+Aumentada (AR Sandbox) que projete sobre uma caixa física de areia uma
+\textbf{malha discretizada de quadrados coloridos} comparando, célula a
+célula, o relevo medido pelo sensor Kinect com o relevo de referência
+extraído de um arquivo GeoTIFF, e que opere em modalidade \emph{plug \&
+play} com fallback automático para um emulador interativo.
+
+\subsection{Objetivos específicos}
+\label{subsec:obj-especificos}
+
+\begin{enumerate}
+    \item Projetar uma arquitetura de software \textbf{monolítica
+          modularizada} de três camadas (Hardware, Lógica, Dados),
+          orquestrada por uma máquina de estados explícita;
+    \item Implementar o módulo \texttt{KinectSensor} com mecanismo de
+          \textit{cascading fallback} (PyKinect2~$\to$~Open3D~$\to$~freenect~$\to$~Simulação);
+    \item Implementar o motor matemático \texttt{motor\_caixao\_areia.py}
+          contemplando ajuste de plano por SVD, base ortonormal por
+          Gram-Schmidt, transformação afim 4$\times$4 e projeção
+          \textit{pinhole} de Tsai;
+    \item Implementar o adaptador \texttt{AdaptadorMDE} para leitura de
+          GeoTIFF via \texttt{rasterio} com interpolação bilinear, e
+          fallback para superfície gaussiana sintética;
+    \item Implementar discretização espacial em \textbf{malha
+          regular}, com agregação de pontos por célula (filtragem
+          estatística do ruído do sensor) e renderização por
+          \texttt{cv2.fillPoly};
+    \item Implementar um \textbf{emulador interativo} controlado por
+          \textit{mouse} que permita cavar e preencher a areia virtual
+          quando o Kinect não estiver disponível;
+    \item Validar todo o motor matemático através de uma suíte de
+          \textbf{testes unitários automatizados}, seguindo os
+          princípios do \textit{Test-Driven Development} (TDD);
+    \item Documentar o projeto em três níveis: documentação oficial
+          acadêmica, \emph{README} de uso prático e relatório de PFC
+          em conformidade com as normas da ABNT.
+\end{enumerate}
+
+\section{Contribuição e Justificativa}
+\label{sec:contribuicao}
+
+A contribuição central deste trabalho reside na integração inédita de
+três elementos: (i) o \textbf{rigor matemático} de uma calibração
+geométrica completa (SVD + Gram-Schmidt + Tsai), (ii) a \textbf{regra
+de negócio quantitativa} de comparação com tolerância numérica explícita
+contra um MDE oficial, e (iii) uma \textbf{arquitetura resiliente} que
+prioriza a confiabilidade operacional na presença de falhas de hardware
+ou de dados. Diferentemente de implementações que utilizam apenas mapas
+de cores qualitativos, o sistema proposto produz uma \emph{decisão
+operacional} para cada célula da mesa: cavar, preencher ou manter.
+
+A justificativa militar é direta: a doutrina nacional prescreve o uso
+do caixão de areia para o ensino e o planejamento tático em todas as
+escolas de formação. Reduzir o tempo necessário à modelagem do relevo
+e aumentar a fidelidade cartográfica do exercício produz ganho direto
+em horas de instrução e em qualidade do treinamento.
+
+\section{Organização do Documento}
+\label{sec:organizacao}
+
+O restante deste documento está organizado da seguinte forma. O
+Capítulo~\ref{cap:fundamentacao} apresenta a fundamentação teórica
+necessária para a compreensão do sistema, abrangendo o sensor Kinect,
+o modelo de câmera \textit{pinhole}, álgebra linear computacional e
+Modelos Digitais de Elevação. O Capítulo~\ref{cap:arquitetura} descreve
+a arquitetura de software e os padrões de projeto adotados. O
+Capítulo~\ref{cap:motor} formaliza, com rigor matemático, todo o
+\textit{pipeline} de processamento. O Capítulo~\ref{cap:rendering}
+detalha a estratégia de renderização por malha discretizada e o
+emulador interativo. O Capítulo~\ref{cap:resultados} apresenta os
+resultados experimentais, a estratégia de testes e a discussão de
+\emph{trade-offs}. Finalmente, a Conclusão sintetiza as contribuições e
+aponta os trabalhos futuros. O Apêndice~A contém o roteiro de
+demonstração utilizado na defesa do PFC.

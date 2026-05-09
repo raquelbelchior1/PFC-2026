@@ -1,0 +1,119 @@
+% =====================================================================
+% conclusao.tex — Conclusão e Trabalhos Futuros
+% =====================================================================
+
+\chapter{Conclusão}
+\label{cap:conclusao}
+
+\section{Síntese das Contribuições}
+
+Este Projeto Final de Curso apresentou o desenvolvimento integral de
+um sistema de Caixão de Areia com Realidade Aumentada para apoio ao
+treinamento militar em operações no terreno. O sistema combina,
+de forma original, três elementos centrais: (i) o rigor matemático
+de uma calibração geométrica completa baseada em SVD, Gram-Schmidt e
+modelo \textit{pinhole} de Tsai; (ii) a regra de negócio quantitativa
+de comparação célula a célula contra um Modelo Digital de Elevação
+fornecido em formato GeoTIFF, com tolerância vertical explícita; e
+(iii) uma arquitetura resiliente, dotada de cadeia de
+\textit{fallback} em quatro níveis, que assegura execução
+\textit{plug \& play} mesmo na ausência total de hardware ou de
+dados cartográficos.
+
+O motor matemático foi desenvolvido sob a metodologia de
+\textit{Test-Driven Development}, resultando em uma suíte com 26
+testes unitários automatizados que verificam — com valores numéricos
+explícitos e auditáveis — todos os contratos algébricos do sistema.
+A arquitetura monolítica modularizada, com seus quatro padrões de
+projeto (Strategy + Fallback, Adapter, State Machine, Observer),
+garante simultaneamente a latência mínima necessária para operação
+em tempo real e a separação clara de responsabilidades indispensável
+à manutenção.
+
+A renderização por malha discretizada — em substituição à projeção
+ingênua de pontos isolados — produz \textit{feedback} visual
+contínuo, geometricamente preciso, computacionalmente eficiente e
+estatisticamente robusto ao ruído do sensor. O emulador interativo
+controlado por \emph{mouse} permite, em qualquer máquina sem hardware
+especializado, demonstrar todo o \textit{pipeline} de forma tangível,
+funcionalidade especialmente valiosa para defesa do projeto e para
+ensino em sala de aula.
+
+Durante a fase de validação, foi identificado e corrigido um defeito
+de calibração que reduzia a área renderizada a uma pequena fração da
+janela de projeção. A correção, formalizada na composição com a
+matriz $T_{\text{shift}}$ e na introdução do filtro de extensão da
+mesa, foi documentada com detalhes no Capítulo~\ref{cap:resultados} e
+está consolidada na versão~3.1 do sistema.
+
+\section{Atendimento aos Objetivos}
+
+Todos os oito objetivos específicos enunciados no
+Capítulo~\ref{cap:intro} foram plenamente atendidos:
+
+\begin{enumerate}
+    \item Arquitetura de três camadas implementada e documentada;
+    \item Cadeia de \textit{fallback} do \texttt{KinectSensor} operacional;
+    \item Motor matemático com SVD + Gram-Schmidt + Tsai funcional;
+    \item \texttt{AdaptadorMDE} com leitura GeoTIFF e \emph{fallback} gaussiano;
+    \item Discretização em malha com renderização por \texttt{cv2.fillPoly};
+    \item Emulador interativo via \texttt{cv2.setMouseCallback};
+    \item Suíte de 26 testes unitários (25 aprovados + 1 ignorado);
+    \item Documentação tripla (acadêmica, prática e relatório ABNT).
+\end{enumerate}
+
+\section{Trabalhos Futuros}
+
+A continuidade da linha de pesquisa pode explorar, dentre outras, as
+seguintes frentes:
+
+\begin{description}
+    \item[Calibração automática do projetor.] A versão atual emprega
+          parâmetros de projeção configurados analiticamente. Uma
+          calibração genuína do projetor por padrões \textit{Gray code}
+          ou tabuleiro de xadrez (já parcialmente suportada pelas
+          funções \texttt{encontrar\_cantos\_tabuleiro} e
+          \texttt{calibrar\_projetor}) eliminaria distorções residuais
+          em montagens não-ideais.
+    \item[Suporte a múltiplas camadas de visualização.] Sobreposição
+          de curvas de nível, escalas batimétricas, isótermas e
+          itinerários táticos — todos coerentes com o mesmo MDE de
+          referência.
+    \item[Integração com SARAS-FFT (Águas Pluviais).] Simulação
+          hidrológica de escoamento sobre o relevo modelado, com
+          renderização em tempo real do fluxo, em complemento à
+          modelagem topográfica.
+    \item[Substituição do Kinect por sensor moderno.] O Microsoft
+          Kinect foi descontinuado; alternativas como o
+          \textit{Intel RealSense}, o \textit{Stereolabs ZED} e o
+          \textit{Microsoft Azure Kinect DK} oferecem maior
+          resolução e confiabilidade. A arquitetura
+          \textit{strategy + fallback} já está preparada para
+          acomodar essa migração com mínimo impacto.
+    \item[Validação em escola militar.] Estudo experimental
+          comparando o tempo médio de modelagem do terreno por
+          turmas com e sem o sistema, e a fidelidade cartográfica
+          do produto final medida por reconstrução fotogramétrica
+          independente.
+    \item[Exportação para realidade virtual.] A nuvem de pontos
+          calibrada pode alimentar um \textit{viewer} VR (Oculus,
+          HTC Vive) para imersão remota ou de instrução à distância.
+\end{description}
+
+\section{Considerações Finais}
+
+A combinação de matemática rigorosa, engenharia de software
+disciplinada e visão clara da aplicação militar produziu um sistema
+que ultrapassa o estado da arte das implementações de
+\textit{AR Sandbox} de finalidade puramente didática ou recreativa.
+A entrega não se limita a um \textit{software} funcional: contempla
+testes automatizados, documentação acadêmica completa, guia de uso
+prático e este próprio relatório de conformidade ABNT, formando um
+conjunto reproduzível, auditável e diretamente aproveitável pelas
+escolas de formação militar.
+
+Acreditamos que o trabalho contribui, ainda que modestamente, para
+a tradição de excelência técnica do Instituto Militar de
+Engenharia, e esperamos que sirva de ponto de partida para futuras
+melhorias e adaptações por gerações seguintes de cadetes e
+engenheiros militares.

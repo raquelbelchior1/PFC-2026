@@ -241,7 +241,13 @@ $$T = \begin{bmatrix} R & \mathbf{t} \\ \mathbf{0}^T & 1 \end{bmatrix}$$
 
 **Modo Simulação:** como os pontos já estão em coordenadas da mesa, $T = I_4$ (identidade).
 
-**Implementação:** `montar_matriz_transformacao()` e `transformar_pontos()` em `motor_caixao_areia.py`.
+**Deslocamento ao centro lógico da mesa (modo real).** A matriz $T$ acima leva o **centroide** $\bar{\mathbf{p}}$ para a origem $(0, 0, 0)$. Porém, a convenção interna de discretização e renderização adota a mesa como o domínio $[0, L_x] \times [0, L_y]$, com a origem em um canto. Para alinhar essas duas convenções, compõe-se $T$ com uma translação fixa:
+
+$$T_{\text{shift}} = \begin{bmatrix} 1 & 0 & 0 & L_x/2 \\ 0 & 1 & 0 & L_y/2 \\ 0 & 0 & 1 & 0 \\ 0 & 0 & 0 & 1 \end{bmatrix}, \qquad T_{\text{final}} = T_{\text{shift}} \cdot T$$
+
+Assim, o ponto físico sob o sensor (centroide do plano detectado) cai exatamente em $(L_x/2, L_y/2)$, e a nuvem ocupa naturalmente $[0, L_x] \times [0, L_y]$. Sem este deslocamento, metade dos pontos teria coordenadas negativas e seria colapsada pelo `clip` da função de discretização nas células de borda da grade — produzindo o artefato visual conhecido como **"retângulo único"** observado em testes preliminares de campo.
+
+**Implementação:** `montar_matriz_transformacao()` e `transformar_pontos()` em `motor_caixao_areia.py`; o $T_{\text{shift}}$ é aplicado em `_executar_calibracao()` (`main.py`).
 
 ---
 
@@ -304,11 +310,14 @@ Com o grid de simulação de 50×50 pontos e 30×30 células, cada célula cont�
 **Implementação vetorizada.** O binning é realizado via `np.add.at` para acumulação eficiente sem loops Python:
 
 ```python
-col = np.clip((x / tam_celula_x).astype(np.int32), 0, n_celulas_x - 1)
-lin = np.clip((y / tam_celula_y).astype(np.int32), 0, n_celulas_y - 1)
-np.add.at(soma_z, (lin, col), z)
+dentro = (x >= 0) & (x < L_x) & (y >= 0) & (y < L_y)   # filtra fora-da-mesa
+col = np.clip((x[dentro] / tam_celula_x).astype(np.int32), 0, n_celulas_x - 1)
+lin = np.clip((y[dentro] / tam_celula_y).astype(np.int32), 0, n_celulas_y - 1)
+np.add.at(soma_z, (lin, col), z[dentro])
 np.add.at(contagens, (lin, col), 1)
 ```
+
+O **filtro `dentro`** é essencial em modo real: o campo de visão do Kinect cobre uma região maior que a mesa, e pontos externos seriam projetados nas células de borda pelo `clip`, contaminando a média de altura.
 
 Células sem pontos ($|\mathcal{P}_{i,j}| = 0$) são marcadas como `NaN` e não são renderizadas.
 
@@ -615,6 +624,6 @@ Saída esperada: **25 passed, 1 skipped** (Open3D ausente no ambiente de teste).
 
 ---
 
-> **Documento gerado em:** Março de 2026
-> **Versão:** 3.0 — Versão final com Malha Discretizada e Emulador Interativo
+> **Documento gerado em:** Maio de 2026
+> **Versão:** 3.1 — Correção do modo real (deslocamento ao centro lógico + filtro de FOV)
 > **Sistema:** Finalizado, testado e pronto para defesa

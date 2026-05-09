@@ -278,3 +278,12 @@ python -m unittest test_motor_caixao -v
 - Tsai, R. Y. (1987). *A Versatile Camera Calibration Technique for High-Accuracy 3D Machine Vision Metrology Using Off-the-Shelf TV Cameras and Lenses*. IEEE Journal of Robotics and Automation.
 - Open3D: http://www.open3d.org/
 - Rasterio: https://rasterio.readthedocs.io/
+
+---
+
+## Histórico de Versões
+
+| Versão | Data | Mudança |
+|---|---|---|
+| **3.1** | Maio/2026 | **Correção do modo real** — após calibração SVD, a matriz $T$ é composta com uma translação $T_{\text{shift}}$ que mapeia o centroide do plano detectado para o centro lógico da mesa $(L_x/2, L_y/2)$, evitando que metade dos pontos (com coordenadas negativas) seja colapsada nas células de borda. Adicionado também filtro `dentro` em `discretizar_nuvem_em_grade()` para descartar pontos do FOV do Kinect que extrapolem o domínio físico da mesa, e configuração de projeção compatível em modo real (mesmo mapeamento usado na simulação). Estes ajustes eliminam o artefato visual em que apenas um pequeno retângulo era projetado após calibrar com a câmera apontada para o chão. |
+| **3.0** | Março/2026 | Versão final com Malha Discretizada e Emulador Interativo. |

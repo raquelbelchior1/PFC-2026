@@ -1,0 +1,42 @@
+% =====================================================================
+% simbolo-abrev.tex — Lista de abreviaturas, siglas e símbolos
+% =====================================================================
+
+\begin{siglas}
+\item[AR] \textit{Augmented Reality} — Realidade Aumentada
+\item[BGR] \textit{Blue, Green, Red} (ordem de canais do OpenCV)
+\item[CV] \textit{Computer Vision} — Visão Computacional
+\item[FOV] \textit{Field of View} — Campo de Visão
+\item[FPS] \textit{Frames Per Second} — Quadros por Segundo
+\item[GIL] \textit{Global Interpreter Lock} (Python)
+\item[GUI] \textit{Graphical User Interface}
+\item[IME] Instituto Militar de Engenharia
+\item[IR] \textit{Infrared} — Infravermelho
+\item[MDE] Modelo Digital de Elevação
+\item[OOP] \textit{Object-Oriented Programming}
+\item[PFC] Projeto Final de Curso
+\item[RGB-D] \textit{Red--Green--Blue + Depth}
+\item[SDK] \textit{Software Development Kit}
+\item[SVD] \textit{Singular Value Decomposition}
+\item[TDD] \textit{Test-Driven Development}
+\item[USB] \textit{Universal Serial Bus}
+\end{siglas}
+
+\begin{simbolos}
+\item[$\mathbf{p}_i$] $i$-ésimo ponto da nuvem capturada pelo sensor
+\item[$\bar{\mathbf{p}}$] centroide da nuvem de pontos
+\item[$\mathbf{n}$] vetor normal unitário do plano da mesa
+\item[$T$] matriz afim 4$\times$4 de transformação Kinect~$\to$~Mesa
+\item[$T_{\text{shift}}$] translação que desloca o centroide para o centro lógico da mesa
+\item[$L_x, L_y$] dimensões físicas da mesa nos eixos $X$ e $Y$ (m)
+\item[$h_{\max}$] espessura máxima de areia mapeável (m)
+\item[$N_x, N_y$] número de células da malha nos eixos $X$ e $Y$
+\item[$\Delta x, \Delta y$] tamanho linear de cada célula (m)
+\item[$\bar{Z}^{\text{real}}_{i,j}$] altura média da célula $(i,j)$ medida pelo Kinect
+\item[$Z^{\text{MDE}}_{i,j}$] altura alvo da célula $(i,j)$ extraída do MDE
+\item[$\tau$] tolerância vertical para classificação de cor (m)
+\item[$K$] matriz intrínseca do projetor
+\item[$f_x, f_y$] distâncias focais em pixels do projetor
+\item[$\alpha$] intensidade da pá virtual (m por evento)
+\item[$\sigma$] desvio padrão do perfil gaussiano da pá virtual
+\end{simbolos}

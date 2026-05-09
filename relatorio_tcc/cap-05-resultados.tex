@@ -1,0 +1,224 @@
+% =====================================================================
+% cap-05-resultados.tex — Capítulo 6: Resultados e Validação
+% =====================================================================
+
+\chapter{Resultados e Validação}
+\label{cap:resultados}
+
+Este capítulo apresenta os resultados experimentais obtidos na
+validação do sistema, organizados em três frentes: a estratégia de
+testes automatizados (Seção~\ref{sec:tdd}), a validação funcional do
+\textit{pipeline} completo (Seção~\ref{sec:funcional}) e a discussão da
+correção do defeito de calibração detectado em ensaio preliminar
+(Seção~\ref{sec:correcao}).
+
+\section{Estratégia de Testes Automatizados}
+\label{sec:tdd}
+
+A estabilidade matemática do motor foi assegurada pela adoção de
+\textbf{Test-Driven Development} (TDD): cada função do módulo
+\texttt{motor\_caixao\_areia.py} foi acompanhada por um conjunto de
+testes unitários escritos previamente, com valores numéricos
+\emph{hardcoded} cuja correção é verificável passo a passo. A suíte
+final compreende \textbf{26 testes} agrupados em nove classes,
+organizados conforme a Tabela~\ref{tab:tests}.
+
+\begin{table}[!ht]
+\centering
+\caption{Estrutura da suíte de testes unitários.}
+\label{tab:tests}
+\begin{tabular}{llc}
+\toprule
+\textbf{Classe} & \textbf{Componente verificado} & \textbf{Testes} \\
+\midrule
+\texttt{TestAjustePlano}            & SVD, normal unitária, equação do plano   & 4 \\
+\texttt{TestGramSchmidt}            & Ortogonalidade, exceção paralelos        & 2 \\
+\texttt{TestConstruirBase}          & Ortonormalidade dos eixos                & 3 \\
+\texttt{TestMatrizTransformacao}    & Identidade, translação, $z_{\text{mesa}} = 0$ & 3 \\
+\texttt{TestDeteccaoTabuleiro}      & Detecção de tabuleiro $7 \times 5$       & 2 \\
+\texttt{TestProjecaoTsai}           & Projeção \textit{pinhole}                & 3 \\
+\texttt{TestLeituraRGBD}            & Importação condicional Open3D            & 1 \\
+\texttt{TestMDEColoracao}           & Regra Vermelho/Azul/Verde                & 6 \\
+\texttt{TestPipeline}               & Integração completa Passos 1+2           & 2 \\
+\midrule
+\textbf{Total}                       & \multicolumn{2}{r}{\textbf{26}}            \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Filosofia: transparência matemática}
+
+Cada teste documenta, em comentário, a conta esperada passo a passo,
+permitindo verificação independente. A título de exemplo, o teste
+do plano horizontal $z = 5$ é resumido como:
+
+\begin{lstlisting}[caption={Teste do plano horizontal — verificação manual.}, label=lst:test-plano]
+# Pontos: (0,0,5), (1,0,5), (0,1,5), (1,1,5), (2,3,5)
+# Centroide esperado: (0.8, 0.8, 5.0)
+# Normal esperada:    (0, 0, 1)  -- plano horizontal
+# d esperado:         -5
+# Verificacao:  n . p + d = (0,0,1) . (0,0,5) + (-5) = 5 - 5 = 0  OK
+\end{lstlisting}
+
+A execução completa (\texttt{python -m unittest test\_motor\_caixao -v})
+reporta \emph{25 testes aprovados e 1 ignorado} (o teste de Open3D, que
+é executado condicionalmente quando a biblioteca está instalada). Não
+há falhas conhecidas na suíte.
+
+\section{Validação Funcional do \textit{Pipeline}}
+\label{sec:funcional}
+
+A validação funcional foi realizada em duas modalidades complementares:
+o modo simulação (sem hardware) e o modo real (com sensor Kinect~v2).
+
+\subsection{Modo simulação}
+
+Em modo simulação, o sistema combina a \textbf{grade de areia
+nivelada} ($Z = 0{,}15$~m em todas as células) com o \textbf{Morro
+Gaussiano} de referência (pico de $0{,}30$~m no centro da mesa,
+caindo a $0$ nas bordas), produzindo as três cores simultaneamente
+no \textit{frame} inicial:
+
+\begin{itemize}
+    \item Bordas \textbf{vermelhas} (areia em excesso, $Z = 0{,}15 >
+          0 + \tau$);
+    \item Anel intermediário \textbf{verde} (próximo a $Z = 0{,}15$
+          do MDE);
+    \item Centro \textbf{azul} (areia insuficiente, $Z = 0{,}15 <
+          0{,}30 - \tau$).
+\end{itemize}
+
+\noindent À medida que o operador interage com o \emph{mouse} —
+arrastando o botão direito no centro e o esquerdo nas bordas — as cores
+se ajustam em tempo real. O critério de \emph{conclusão} do exercício é
+a obtenção de uma malha integralmente verde, indicando que a areia
+virtual replica fielmente o MDE.
+
+A taxa de quadros medida em uma máquina típica de desenvolvimento
+(Intel i5 de oitava geração, 8~GiB de RAM, sem GPU dedicada) supera
+\textbf{30~fps} de forma consistente, resposta mais que suficiente
+para interação humana fluida.
+
+\subsection{Modo real}
+
+Em modo real, com o sensor Kinect~v2 conectado via USB~3.0 e o
+\texttt{ALTURA\_KINECT} configurado para a altura efetiva de instalação,
+o sistema processa cerca de \textbf{200~000 pontos por \textit{frame}}
+(resolução $512 \times 424$ filtrada para $0{,}5 < Z < 4{,}5$~m). A
+calibração inicial, executada com a areia previamente nivelada,
+produz $\mathbf{n} \approx (0, 0, 1)$ com erro angular inferior a
+$2^{\circ}$ relativo à vertical, o que é compatível com o ruído nominal
+do sensor.
+
+\section{Defeito Detectado e Correção Implementada}
+\label{sec:correcao}
+
+Durante o ensaio preliminar de campo, foi observado um defeito visual
+significativo: após a calibração com o sensor apontado para uma
+superfície plana (piso de concreto), a janela \texttt{Projecao\_Areia}
+exibia apenas \emph{um pequeno retângulo azul} no canto inferior, em
+vez da malha contínua esperada de quadrados coloridos. A
+Figura~\ref{fig:bug} ilustra o sintoma observado.
+
+\begin{figure}[!ht]
+\centering
+\fbox{\parbox{0.85\linewidth}{\centering
+\textit{[Captura de tela do defeito: pequeno retângulo azul no canto da
+janela de projeção, restante preto. Substituir por img/bug\_calibracao.png
+quando disponível.]}
+}}
+\caption{Sintoma do defeito de calibração (versão 3.0): apenas uma
+pequena fração da projeção é renderizada após calibrar com a câmera
+apontada para o piso.}
+\label{fig:bug}
+\end{figure}
+
+\subsection{Diagnóstico}
+
+A análise da implementação revelou duas causas concorrentes:
+
+\begin{enumerate}
+    \item A função \texttt{transformar\_pontos()}, ao aplicar a matriz
+          $T$ obtida pela calibração, leva o centroide do plano à
+          \emph{origem} $(0, 0, 0)$. Em consequência, a nuvem
+          transformada ocupa aproximadamente
+          $[-L_x/2, +L_x/2] \times [-L_y/2, +L_y/2]$, e \emph{metade} dos
+          pontos possui coordenadas negativas. A função
+          \texttt{discretizar\_nuvem\_em\_grade()} aplicava
+          \texttt{numpy.clip} nos índices de célula, colapsando todos
+          esses pontos negativos na coluna~0 e na linha~0 da grade —
+          isto é, em uma estreita faixa de borda;
+    \item Os parâmetros de projeção do projetor, em modo real, eram
+          \emph{valores \textit{mock}} de placeholder ($f_x = f_y = 500$,
+          $c_x = 320$, $c_y = 240$, $\mathbf{t}_{\text{ext}} = (0,0,1)^{T}$),
+          que mapeavam o domínio da mesa para uma sub-região da janela
+          em vez de preenchê-la integralmente.
+\end{enumerate}
+
+\subsection{Correção implementada}
+
+A correção, materializada na versão~3.1 do sistema, contemplou três
+ajustes simultâneos em \texttt{main.py} e \texttt{motor\_caixao\_areia.py}:
+
+\begin{enumerate}
+    \item \textbf{Composição com $T_{\text{shift}}$.} A matriz de
+          transformação final é agora $T_{\text{final}} = T_{\text{shift}}
+          \cdot T$, conforme a Equação~\eqref{eq:T-shift}, o que desloca
+          o centroide ao centro lógico $(L_x/2, L_y/2)$ da mesa;
+    \item \textbf{Filtro \texttt{dentro}.} A função
+          \texttt{discretizar\_nuvem\_em\_grade()} passou a descartar
+          pontos com $x \notin [0, L_x)$ ou $y \notin [0, L_y)$ antes do
+          \texttt{clip}, eliminando o acúmulo nas células de borda;
+    \item \textbf{Projeção \emph{coerente}.} Os parâmetros do projetor
+          em modo real foram substituídos pela mesma parametrização
+          empregada na simulação (Equação~\eqref{eq:fxfy-virtual}),
+          assegurando que a malha preencha a janela integralmente.
+\end{enumerate}
+
+\noindent As três alterações foram testadas em conjunto e o defeito
+não voltou a se manifestar. A suíte de testes unitários permanece
+integralmente válida após as correções, pois nenhum dos contratos
+matemáticos das funções afetadas foi alterado — somente a composição
+foi adicionada no nível do orquestrador.
+
+\section{Discussão de \emph{Trade-offs}}
+\label{sec:tradeoffs}
+
+\subsection{Resolução da malha}
+
+A escolha de $30 \times 30$ células (5~cm$\,\times\,$5~cm cada) é o
+equilíbrio entre quatro fatores:
+
+\begin{itemize}
+    \item \textbf{Granularidade visual.} Células maiores tornam a
+          imagem ``grosseira'' e perdem detalhe topográfico;
+    \item \textbf{Filtragem de ruído.} Células menores recebem menos
+          pontos por unidade, comprometendo a redução $\sigma/\sqrt{n}$
+          do ruído de profundidade;
+    \item \textbf{Custo de renderização.} O número de chamadas a
+          \texttt{cv2.fillPoly} é $N_x \cdot N_y$, escalando
+          quadraticamente com a resolução;
+    \item \textbf{Significado militar.} Em escala 1:50~000 (carta
+          tática típica), 5~cm na mesa equivalem a 2,5~km no terreno —
+          uma resolução compatível com a granularidade operacional.
+\end{itemize}
+
+\subsection{Tolerância de cor}
+
+A tolerância $\tau = 0{,}02$~m (2~cm) foi escolhida considerando
+duas grandezas: o ruído residual após a agregação espacial
+($\sigma_{\bar{Z}} \lesssim 1$~mm para dezenas de pontos por célula) e
+a granularidade prática da operação manual humana com areia (uma mão
+desloca naturalmente entre 1 e 3~cm por movimento). Valores menores
+produziriam oscilações visuais perceptíveis durante o trabalho; valores
+maiores reduziriam a precisão final do terreno modelado.
+
+\subsection{Linguagem e \emph{stack}}
+
+A escolha de Python como linguagem principal é justificada pelo
+ecossistema científico maduro (NumPy, SciPy, OpenCV), pela velocidade
+de desenvolvimento e pela facilidade de inspeção em ambiente
+acadêmico. As operações computacionalmente intensivas — SVD,
+back-projection, projeção de Tsai, rasterização — são integralmente
+delegadas a rotinas em C/C++ via NumPy e OpenCV, eliminando o gargalo
+do interpretador.

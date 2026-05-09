@@ -1,0 +1,161 @@
+# =====================================================================
+# .gitignore — PFC-2026 (AR Sandbox)
+# =====================================================================
+
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.pyd
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+*.egg
+MANIFEST
+pip-log.txt
+pip-delete-this-directory.txt
+
+# ---------- Ambientes virtuais ----------
+kinect_env/
+venv/
+env/
+.venv/
+ENV/
+
+# ---------- Testes / cobertura ----------
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+coverage.xml
+*.cover
+nosetests.xml
+
+# ---------- Notebooks ----------
+.ipynb_checkpoints/
+*.ipynb_meta
+
+# ---------- LaTeX (relatorio_tcc/) ----------
+*.aux
+*.bbl
+*.blg
+*.brf
+*.fdb_latexmk
+*.fls
+*.idx
+*.ilg
+*.ind
+*.lof
+*.log
+*.lot
+*.out
+*.synctex.gz
+*.synctex(busy)
+*.toc
+*.nav
+*.snm
+*.vrb
+*.xdv
+*.bcf
+*.run.xml
+*.dvi
+*.ps
+*-blx.bib
+*.acn
+*.acr
+*.alg
+*.glg
+*.glo
+*.gls
+*.ist
+# Manter o PDF final do relatório versionado:
+!relatorio_tcc/main.pdf
+
+# ---------- Sistema operacional ----------
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+
+# Linux
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+
+# ---------- IDEs / editores ----------
+.vscode/
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+.idea/
+*.iml
+*.swp
+*.swo
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sublime-project
+*.sublime-workspace
+
+# ---------- Dados e saídas do projeto ----------
+# Dados brutos de captura, MDEs grandes, vídeos de demonstração
+*.tif
+*.tiff
+*.geotiff
+*.las
+*.laz
+*.ply
+*.pcd
+*.bag
+*.mp4
+*.mkv
+*.avi
+*.mov
+capturas/
+output/
+logs/
+*.log
+
+# Dados de calibração intermediários
+calibracao_*.npz
+calibracao_*.npy
+calibracao_*.json
+
+# ---------- Segredos ----------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets.yaml

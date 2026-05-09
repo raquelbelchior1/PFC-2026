@@ -340,13 +340,45 @@ def _executar_calibracao(sensor: KinectSensor) -> DadosCalibracao:
 
     normal, d, centroide, X, Y, Z, T = pipeline_plano_e_base(pontos)
 
+    # T leva o centroide do plano para a origem (0, 0, 0) no referencial
+    # da mesa.  Mas a nossa convenção de mesa é [0, L] × [0, C], com a
+    # origem em um canto.  Portanto, deslocamos T por (+L/2, +C/2) para
+    # que o centroide do plano (centro físico da mesa, sob o Kinect)
+    # caia no centro lógico da mesa (L/2, C/2).  Sem este deslocamento,
+    # metade dos pontos teria coordenadas negativas e seria colapsada
+    # na coluna 0 / linha 0 da grade de discretização.
+    T_shift = np.eye(4)
+    T_shift[0, 3] = LARGURA_MESA / 2.0
+    T_shift[1, 3] = COMPRIMENTO_MESA / 2.0
+    T = T_shift @ T
+
     dados.T = T
     dados.normal = normal
     dados.centroide = centroide
 
+    # Configurar projeção real para mapear a mesa [0, L] × [0, C] na
+    # janela do projetor (mesma estratégia da simulação).  Sem isto,
+    # os defaults mock (fx=500, cx=320, tvec=[0,0,1]) projetariam a
+    # mesa em um sub-retângulo da imagem.
+    largura, altura = RESOLUCAO_PROJETOR
+    d_cam = 10.0
+    fx = largura * d_cam / LARGURA_MESA
+    fy = altura * d_cam / COMPRIMENTO_MESA
+    dados.camera_matrix = np.array([
+        [fx,  0.0, 0.0],
+        [0.0, fy,  0.0],
+        [0.0, 0.0, 1.0],
+    ])
+    dados.dist_coeffs = np.zeros(5)
+    dados.rvec = np.zeros((3, 1))
+    dados.tvec = np.array([[0.0], [0.0], [d_cam]])
+
     print(f"  Plano: {normal[0]:.4f}x + {normal[1]:.4f}y "
           f"+ {normal[2]:.4f}z + {d:.2f} = 0")
     print(f"  Centroide: ({centroide[0]:.1f}, {centroide[1]:.1f}, {centroide[2]:.1f})")
+    print(f"  Mesa lógica: [0, {LARGURA_MESA:.2f}] × [0, {COMPRIMENTO_MESA:.2f}] m "
+          f"(centroide → centro)")
+    print(f"  Projeção: fx={fx:.1f}, fy={fy:.1f}, d={d_cam:.1f} m")
     print("  ✓ Calibração concluída.")
     print("=" * 50 + "\n")
 

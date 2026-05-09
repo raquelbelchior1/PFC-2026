@@ -1,0 +1,188 @@
+% =====================================================================
+% cap-01-fundamentacao.tex — Capítulo 2: Fundamentação Teórica
+% =====================================================================
+
+\chapter{Fundamentação Teórica}
+\label{cap:fundamentacao}
+
+Este capítulo apresenta os conceitos teóricos fundamentais que sustentam
+o sistema desenvolvido, organizados em quatro blocos: o sensor de
+profundidade Kinect (Seção~\ref{sec:kinect}), o modelo de câmera
+\textit{pinhole} estendido por Tsai (Seção~\ref{sec:pinhole}), as
+ferramentas de álgebra linear computacional empregadas
+(Seção~\ref{sec:algebra}) e a representação cartográfica por Modelos
+Digitais de Elevação (Seção~\ref{sec:mde}).
+
+\section{O Sensor Microsoft Kinect}
+\label{sec:kinect}
+
+O \textit{Microsoft Kinect} é um dispositivo de captura tridimensional
+originalmente concebido para o controle gestual do videogame
+\textit{Xbox 360} (versão~v1, 2010) e posteriormente sucedido pela
+versão para \textit{Xbox One} (versão~v2, 2014). Para fins acadêmicos e
+industriais, o sensor revelou-se notável pela combinação de baixo custo
+e qualidade aceitável de profundidade, tendo se consolidado como
+plataforma de pesquisa em visão computacional, robótica e interação
+humano-computador~\cite{zhang2012kinect}.
+
+\subsection{Princípio de medição}
+\label{subsec:tof}
+
+A versão~v1 do Kinect mede a profundidade pelo princípio de
+\emph{luz estruturada}: um projetor infravermelho emite um padrão
+pseudo-aleatório de pontos sobre a cena, e uma câmera infravermelha
+calibrada captura a deformação desse padrão. A profundidade de cada
+\emph{pixel} é estimada por triangulação. A versão~v2 substitui esse
+princípio pelo \textit{Time-of-Flight} (ToF), no qual a profundidade é
+calculada a partir do deslocamento de fase de pulsos infravermelhos
+modulados~\cite{sell2014xbox}.
+
+\subsection{Parâmetros intrínsecos}
+\label{subsec:intrinsecos-kinect}
+
+Para a versão~v2, empregada como referência neste trabalho, os
+parâmetros intrínsecos do sensor de profundidade são:
+
+\begin{table}[!ht]
+\centering
+\caption{Parâmetros intrínsecos do sensor de profundidade do Kinect~v2.}
+\label{tab:intrinsecos}
+\begin{tabular}{ll}
+\toprule
+\textbf{Parâmetro} & \textbf{Valor} \\
+\midrule
+Resolução                  & $512 \times 424$ pixels \\
+Distância focal $f_x, f_y$ & $367{,}35$ pixels \\
+Centro óptico $(c_x, c_y)$ & $(260{,}00,\; 205{,}00)$ pixels \\
+Faixa útil de operação     & $0{,}5$ a $4{,}5$ metros \\
+Saída do SDK               & milímetros (\texttt{uint16}) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+A conversão entre pixel $(u, v)$ e ponto 3D $(X, Y, Z)$ no referencial
+do sensor usa a relação canônica de \textit{back-projection} pinhole:
+
+\begin{equation}
+\label{eq:backproj}
+X = (u - c_x) \cdot \frac{Z}{f_x}, \qquad
+Y = (v - c_y) \cdot \frac{Z}{f_y}, \qquad
+Z = \frac{d_{\text{mm}}}{1000},
+\end{equation}
+
+\noindent onde $d_{\text{mm}}$ é a profundidade lida pelo sensor.
+
+\subsection{Ruído e tratamento}
+\label{subsec:ruido}
+
+O sensor apresenta ruído gaussiano cujo desvio padrão cresce
+quadraticamente com a profundidade. Na faixa de operação adotada
+(2--3~m, com o sensor a 2,5~m da mesa), valores típicos situam-se entre
+$\sigma \approx 2$ e $\sigma \approx 4$~mm por \textit{pixel}. Esse
+ruído justifica a estratégia de \textbf{agregação espacial}
+(Capítulo~\ref{cap:rendering}): ao se calcular a média de $n$ pontos por
+célula da malha, o desvio padrão do estimador da altura é reduzido
+para $\sigma_{\bar{Z}} = \sigma / \sqrt{n}$, conforme o
+\textit{Central Limit Theorem}.
+
+\section{Modelo de Câmera Pinhole e Calibração de Tsai}
+\label{sec:pinhole}
+
+A projeção de um ponto 3D no plano de imagem 2D segue, em primeira
+aproximação, o modelo \textit{pinhole}:
+
+\begin{equation}
+\label{eq:pinhole}
+s
+\begin{bmatrix} u \\ v \\ 1 \end{bmatrix}
+=
+K \cdot
+\begin{bmatrix} R_{\text{ext}} & \mathbf{t}_{\text{ext}} \end{bmatrix}
+\begin{bmatrix} X \\ Y \\ Z \\ 1 \end{bmatrix},
+\quad
+K = \begin{bmatrix} f_x & 0 & c_x \\ 0 & f_y & c_y \\ 0 & 0 & 1 \end{bmatrix},
+\end{equation}
+
+\noindent onde $K$ é a \textbf{matriz intrínseca} do dispositivo (câmera ou
+projetor), $R_{\text{ext}}$ e $\mathbf{t}_{\text{ext}}$ formam a
+\textbf{matriz extrínseca} (rotação e translação do referencial mundo
+para o referencial do dispositivo) e $s$ é um fator de escala não nulo.
+
+O modelo de \citeonline{tsai1987versatile} estende o
+\textit{pinhole} canônico com a inclusão de \textbf{distorções óticas}
+radiais (coeficientes $k_1, k_2, k_3$) e tangenciais ($p_1, p_2$),
+fornecendo precisão sub-pixel para câmeras e projetores reais. A
+biblioteca OpenCV~\cite{bradski2008opencv} implementa esse modelo
+através das funções \texttt{cv2.calibrateCamera}, \texttt{cv2.solvePnP}
+e \texttt{cv2.projectPoints}, todas utilizadas no presente trabalho.
+
+\section{Álgebra Linear Computacional}
+\label{sec:algebra}
+
+\subsection{Decomposição em Valores Singulares}
+\label{subsec:svd}
+
+Dada uma matriz $M \in \mathbb{R}^{N \times 3}$, sua decomposição em
+valores singulares é $M = U \Sigma V^{T}$, com $\Sigma$ diagonal contendo
+$\sigma_1 \geq \sigma_2 \geq \sigma_3 \geq 0$. O vetor singular direito
+associado ao menor valor $\sigma_3$, isto é, a última linha de $V^{T}$,
+constitui a solução do problema de mínimos quadrados restrito
+\begin{equation}
+\label{eq:svd-min}
+\mathbf{n}^* = \arg\min_{\|\mathbf{v}\| = 1} \; \|M \mathbf{v}\|_2^2,
+\end{equation}
+
+\noindent o que, no contexto deste trabalho, corresponde ao vetor normal
+do plano que melhor se ajusta à nuvem de pontos centralizada
+(Seção~\ref{sec:passo1}).
+
+\subsection{Processo de Gram-Schmidt}
+\label{subsec:gs}
+
+O processo de ortogonalização de Gram-Schmidt converte um conjunto
+linearmente independente $\{\mathbf{v}_1, \ldots, \mathbf{v}_n\}$ em um
+conjunto ortonormal preservando os subespaços gerados. Neste trabalho,
+o procedimento é aplicado para construir uma base ortonormal
+$\{X_{\text{mesa}}, Y_{\text{mesa}}, Z_{\text{mesa}}\}$ a partir do
+vetor normal obtido por SVD.
+
+\subsection{Transformações afins homogêneas}
+\label{subsec:afim}
+
+Uma transformação afim 3D é representada de forma compacta por uma
+matriz $4 \times 4$ que combina rotação $R \in \mathbb{R}^{3 \times 3}$ e
+translação $\mathbf{t} \in \mathbb{R}^{3}$:
+\begin{equation}
+\label{eq:afim}
+T = \begin{bmatrix} R & \mathbf{t} \\ \mathbf{0}^{T} & 1 \end{bmatrix},
+\qquad
+\begin{bmatrix} \mathbf{p}' \\ 1 \end{bmatrix}
+= T \begin{bmatrix} \mathbf{p} \\ 1 \end{bmatrix}.
+\end{equation}
+
+A composição de transformações é dada pelo produto matricial. Em
+particular, a aplicação sucessiva de $T$ (alinhamento) e $T_{\text{shift}}$
+(deslocamento ao centro lógico da mesa) é realizada por
+$T_{\text{final}} = T_{\text{shift}} \cdot T$, conforme
+discutido na Seção~\ref{subsec:T-shift}.
+
+\section{Modelos Digitais de Elevação e o Formato GeoTIFF}
+\label{sec:mde}
+
+Um \textbf{Modelo Digital de Elevação} (MDE) é uma representação
+matricial discreta da altimetria de uma região, na qual cada \emph{pixel}
+codifica a elevação $Z$ correspondente a uma coordenada geográfica
+$(X, Y)$~\cite{li2005digital}. MDEs constituem produto de saída
+fundamental da Geomática e são amplamente empregados em planejamento
+militar, hidrografia, agricultura de precisão e simulação ambiental.
+
+O formato \textbf{GeoTIFF}~\cite{geotiff} é um padrão aberto que
+estende o tradicional \texttt{TIFF} com metadados de georreferenciamento:
+sistema de coordenadas, \emph{datum}, projeção cartográfica e
+transformação afim que mapeia índices de \emph{pixel} para coordenadas
+do mundo. A leitura programática do formato em Python é realizada pela
+biblioteca \texttt{rasterio}~\cite{rasterio}, que retorna um arranjo
+NumPy associado a metadados consultáveis. A consulta da elevação em
+coordenadas arbitrárias entre os pixels é tratada neste trabalho por
+\textbf{interpolação bilinear}, implementada na classe
+\texttt{scipy.interpolate.RegularGridInterpolator}~\cite{scipy}.

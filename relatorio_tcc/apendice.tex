@@ -1,0 +1,71 @@
+% =====================================================================
+% apendice.tex — Apêndice A: Roteiro de Demonstração
+% =====================================================================
+
+\chapter{Roteiro de Demonstração para a Banca}
+\label{ap:roteiro}
+
+Este apêndice consolida o roteiro de demonstração utilizado durante a
+defesa do projeto, organizado em onze passos sequenciais que cobrem
+desde a inicialização do sistema até a recalibração e o encerramento.
+Cada passo é acompanhado da ação a ser executada e do resultado
+esperado para fins de avaliação.
+
+\begin{table}[!ht]
+\centering
+\caption{Roteiro de demonstração passo a passo.}
+\label{tab:roteiro}
+\small
+\begin{tabular}{cll}
+\toprule
+\textbf{\#} & \textbf{Ação} & \textbf{Resultado esperado} \\
+\midrule
+1  & Executar \texttt{python main.py}             & Abertura das janelas \texttt{Projecao\_Areia} e \texttt{Gabarito\_MDE} \\
+2  & Selecionar mapa GeoTIFF (ou modo demo) na GUI inicial & Mensagem de carregamento bem-sucedido no terminal \\
+3  & Pressionar tecla \texttt{C}                  & Calibração executada (SVD + Gram-Schmidt + $T_{\text{shift}}$) \\
+4  & Observar \texttt{Projecao\_Areia}            & Malha contínua: bordas vermelhas, anel verde, centro azul \\
+5  & Observar \texttt{Gabarito\_MDE}              & Heatmap do Morro Gaussiano (ou GeoTIFF real) de referência \\
+6  & Arrastar botão direito do mouse no centro    & Quadrados centrais transitam de azul $\to$ verde \\
+7  & Arrastar botão esquerdo do mouse nas bordas  & Quadrados das bordas transitam de vermelho $\to$ verde \\
+8  & Continuar interação                          & Convergência da malha para totalmente verde \\
+9  & Pressionar tecla \texttt{F}                  & Janela \texttt{Projecao\_Areia} entra em modo tela cheia \\
+10 & Pressionar tecla \texttt{C} novamente        & Recalibração bem-sucedida (demonstra robustez) \\
+11 & Pressionar tecla \texttt{Q} ou \texttt{ESC}  & Encerramento limpo, recursos liberados \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent
+\textbf{Pontos-chave para destacar à banca:}
+\begin{itemize}
+    \item A interação com o \emph{mouse} demonstra em tempo real
+          \emph{todo} o \textit{pipeline} matemático (discretização
+          em malha $\to$ média espacial $\to$ comparação com MDE
+          $\to$ projeção \textit{pinhole} de Tsai $\to$ rasterização
+          por \texttt{cv2.fillPoly}), \textbf{sem} necessidade de
+          hardware físico;
+    \item A recalibração em tempo de execução comprova a robustez do
+          mecanismo de \textit{fallback} e a estabilidade numérica do
+          SVD, mesmo após sucessivas modificações na areia virtual;
+    \item A taxa de quadros (FPS) exibida no canto superior esquerdo
+          da janela de projeção mantém-se consistentemente acima de
+          30~fps, validando o requisito de operação em tempo real.
+\end{itemize}
+
+\section*{Comandos auxiliares}
+
+Para executar a suíte de testes unitários:
+
+\begin{lstlisting}
+python -m unittest test_motor_caixao -v
+\end{lstlisting}
+
+\noindent Saída esperada: \texttt{25 passed, 1 skipped} (Open3D
+ausente no ambiente de testes).
+
+Para forçar o modo simulação mesmo com Kinect conectado, editar no
+topo do arquivo \texttt{main.py}:
+
+\begin{lstlisting}
+FORCAR_SIMULACAO = True
+\end{lstlisting}

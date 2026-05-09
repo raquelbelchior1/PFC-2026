@@ -1,0 +1,172 @@
+% =====================================================================
+% cap-02-arquitetura.tex — Capítulo 3: Arquitetura de Software
+% =====================================================================
+
+\chapter{Arquitetura de Software}
+\label{cap:arquitetura}
+
+Este capítulo descreve a arquitetura do sistema, organizada em quatro
+seções: a justificativa do estilo arquitetural adotado
+(Seção~\ref{sec:estilo}), a estrutura de módulos
+(Seção~\ref{sec:modulos}), a máquina de estados que orquestra a execução
+(Seção~\ref{sec:fsm}) e os padrões de projeto aplicados
+(Seção~\ref{sec:patterns}).
+
+\section{Estilo Arquitetural: Monolítico Modularizado}
+\label{sec:estilo}
+
+A arquitetura adotada é \textbf{monolítica modularizada}: todos os
+módulos executam dentro de um único processo Python, comunicando-se por
+chamada direta de função. A escolha foi norteada por três requisitos do
+domínio:
+
+\begin{description}
+    \item[Latência mínima.] O \textit{loop} de Realidade Aumentada
+          opera em mais de 30 quadros por segundo, e qualquer
+          serialização ou marshalling intermediário (como em uma
+          arquitetura de microsserviços) introduziria atraso intolerável
+          entre a captura e a projeção.
+    \item[Simplicidade de \textit{deploy}.] Um único ponto de entrada
+          (\texttt{main.py}) e um conjunto fixo de dependências
+          permitem operação \textit{plug \& play} em qualquer máquina
+          Windows ou Linux com Python e OpenCV instalados.
+    \item[Testabilidade.] Cada módulo encapsula uma responsabilidade
+          bem definida, permitindo testes unitários isolados sem
+          necessidade de \emph{mock} de rede ou \emph{containers}.
+\end{description}
+
+\section{Módulos do Sistema}
+\label{sec:modulos}
+
+A árvore de arquivos do projeto é apresentada a seguir:
+
+\begin{lstlisting}[language=, caption={Estrutura de módulos do projeto.}, label=lst:tree]
+PFC-2026/
++-- main.py                  # Orquestrador (FSM + mouse callback)
++-- kinect_sensor.py         # Camada de Hardware (KinectSensor)
++-- motor_caixao_areia.py    # Motor matematico (algebra + grade)
++-- mde_cartografia.py       # Adaptador de MDE (GeoTIFF + fallback)
++-- test_motor_caixao.py     # 26 testes unitarios automatizados
++-- DOCUMENTACAO_OFICIAL.md  # Documentacao academica completa
++-- README.md                # Guia de uso pratico
++-- relatorio_tcc/           # Esta pasta (relatorio LaTeX do PFC)
+\end{lstlisting}
+
+A Tabela~\ref{tab:modulos} resume a responsabilidade de cada módulo.
+
+\begin{table}[!ht]
+\centering
+\caption{Responsabilidades dos módulos.}
+\label{tab:modulos}
+\begin{tabular}{lll}
+\toprule
+\textbf{Camada} & \textbf{Módulo} & \textbf{Responsabilidade} \\
+\midrule
+Hardware     & \texttt{kinect\_sensor.py}    & Captura da nuvem 3D, fallback, simulação \\
+Lógica       & \texttt{motor\_caixao\_areia.py} & Álgebra linear, discretização, projeção \\
+Dados        & \texttt{mde\_cartografia.py}  & Leitura de GeoTIFF, fallback gaussiano \\
+Orquestração & \texttt{main.py}              & FSM, janelas, callback de \emph{mouse} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Máquina de Estados Finita}
+\label{sec:fsm}
+
+A execução do sistema é controlada por uma máquina de estados finita
+(\textit{Finite State Machine} — FSM) com quatro estados principais e
+transições determinísticas controladas por teclado. A
+Figura~\ref{fig:fsm} ilustra o diagrama de estados.
+
+\begin{figure}[!ht]
+\centering
+\begin{lstlisting}[language=, basicstyle=\ttfamily\footnotesize, frame=single]
+        +------+               +-----------+
+        | INIT |--inicializa-->|   IDLE    |
+        +------+   recursos    +-----+-----+
+                                     | tecla [C]
+                                     v
+                               +------------+
+              tecla [C]  <-----| CALIBRACAO |
+              +-----+          | (SVD+G-S)  |
+              |     |          +-----+------+
+              |     |                | sucesso
+              |     |                v
+              |     |          +-----+--------+
+              |     +----------| AR_LOOP      |---tecla [Q/ESC]--> ENCERRAR
+              |                |  (real-time) |
+              +----------------+--------------+
+\end{lstlisting}
+\caption{Máquina de estados do orquestrador.}
+\label{fig:fsm}
+\end{figure}
+
+\begin{description}
+    \item[INIT.] Inicializa o \texttt{KinectSensor} (com cadeia de
+          \emph{fallback}), carrega o \texttt{AdaptadorMDE} (com
+          \emph{fallback} gaussiano), cria as duas janelas OpenCV e
+          registra o \emph{callback} de \emph{mouse}.
+    \item[IDLE.] Exibe o mapa de profundidade colorido enquanto aguarda
+          o comando de calibração (tecla \texttt{C}). Permite
+          encerramento imediato.
+    \item[CALIBRACAO.] Em modo real, captura uma nuvem de pontos,
+          executa SVD + Gram-Schmidt + montagem de $T$ + composição com
+          $T_{\text{shift}}$ (Seção~\ref{subsec:T-shift}). Em modo
+          simulação, atribui $T = I_4$ e configura a projeção que mapeia
+          $[0, L_x] \times [0, L_y]$ na janela do projetor.
+    \item[AR\_LOOP.] Executa, a cada \emph{frame}, o \textit{pipeline}
+          completo: captura $\to$ transformação $\to$ discretização
+          $\to$ comparação MDE $\to$ projeção Tsai $\to$ rasterização.
+          Eventos de \emph{mouse} entre quadros modificam a grade de
+          areia virtual (modo simulação).
+\end{description}
+
+\section{Padrões de Projeto Aplicados}
+\label{sec:patterns}
+
+A Tabela~\ref{tab:patterns} elenca os padrões de projeto adotados
+e seu propósito específico no sistema.
+
+\begin{table}[!ht]
+\centering
+\caption{Padrões de projeto aplicados.}
+\label{tab:patterns}
+\begin{tabular}{lll}
+\toprule
+\textbf{Padrão} & \textbf{Onde} & \textbf{Propósito} \\
+\midrule
+Strategy + Fallback & \texttt{KinectSensor} & Seleção transparente de \textit{driver} \\
+Adapter             & \texttt{AdaptadorMDE} & Isolar formato GeoTIFF da interface \\
+State Machine       & \texttt{main.py}      & Controle determinístico do fluxo \\
+Observer (Callback) & \texttt{main.py}      & Eventos de \emph{mouse} desacoplados \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Cadeia de \textit{fallback} do sensor}
+\label{subsec:fallback}
+
+O construtor do \texttt{KinectSensor} executa, em ordem, quatro
+tentativas de inicialização. A primeira que tiver sucesso é mantida; em
+caso contrário, prossegue-se ao próximo nível. A
+Figura~\ref{fig:fallback} esquematiza a cadeia.
+
+\begin{figure}[!ht]
+\centering
+\begin{lstlisting}[language=, basicstyle=\ttfamily\footnotesize, frame=single]
+1. PyKinect2 (SDK Microsoft - Kinect v2)        ---falhou--> 2
+2. Open3D    (Azure Kinect / RealSense)         ---falhou--> 3
+3. freenect  (Kinect v1 / libfreenect)          ---falhou--> 4
+4. SIMULACAO (grade persistente + pa virtual)   <-- sempre OK
+\end{lstlisting}
+\caption{Cadeia de \textit{fallback} do \texttt{KinectSensor}.}
+\label{fig:fallback}
+\end{figure}
+
+A garantia operacional fundamental é que o sistema \textbf{nunca falha
+catastroficamente} por ausência de hardware: o quarto nível
+(\textit{Simulação}) é puramente computacional e não depende de
+quaisquer recursos externos. Garantia análoga aplica-se ao
+\texttt{AdaptadorMDE}: na ausência ou falha de leitura do GeoTIFF, é
+gerada uma superfície gaussiana sintética que assegura visualização
+significativa para a banca.

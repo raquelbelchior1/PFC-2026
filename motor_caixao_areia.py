@@ -535,7 +535,15 @@ def discretizar_nuvem_em_grade(
     y = pontos_mesa[:, 1]
     z = pontos_mesa[:, 2]
 
-    # Índices de célula para cada ponto (clamp para limites da grade)
+    # Filtra pontos fora da extensão física da mesa para evitar
+    # acúmulo nas células de borda (após clamping).  Isso é crítico
+    # quando o FOV do Kinect cobre uma área maior que a mesa.
+    dentro = (x >= 0.0) & (x < largura_mesa) & (y >= 0.0) & (y < comprimento_mesa)
+    x = x[dentro]
+    y = y[dentro]
+    z = z[dentro]
+
+    # Índices de célula para cada ponto (clamp por segurança numérica)
     col = np.clip((x / tam_celula_x).astype(np.int32), 0, n_celulas_x - 1)
     lin = np.clip((y / tam_celula_y).astype(np.int32), 0, n_celulas_y - 1)
 

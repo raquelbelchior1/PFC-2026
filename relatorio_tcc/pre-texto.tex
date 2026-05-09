@@ -1,0 +1,57 @@
+% Pre-textuais: dedicatoria, agradecimentos, epigrafe, resumo, abstract
+
+% --- Dedicatoria ---
+\begin{dedicatoria}
+   \vspace*{\fill}
+   \begin{flushright}
+   \noindent
+   \textit{Aos nossos familiares, que sempre acreditaram\\
+   no poder transformador da educa\c{c}\~ao t\'ecnica\\
+   e da pesquisa aplicada \`a defesa nacional.}
+   \end{flushright}
+\end{dedicatoria}
+
+% --- Agradecimentos ---
+\begin{agradecimentos}
+Agradecemos ao Instituto Militar de Engenharia (IME) pela forma\c{c}\~ao t\'ecnica, cient\'\i fica e humana de excel\^encia, que possibilitou a concep\c{c}\~ao e o desenvolvimento deste trabalho.
+
+Agradecemos especialmente ao nosso orientador e coorientador, pelas in\'umeras horas de discuss\~ao t\'ecnica, pelas sugest\~oes metodol\'ogicas e pelo rigor acad\^emico transmitido ao longo de todo o projeto.
+
+Aos nossos familiares, pela paci\^encia, pelo apoio incondicional e pela compreens\~ao nos in\'umeros fins de semana dedicados a esta obra.
+
+Aos colegas de turma, com quem partilhamos discuss\~oes t\'ecnicas, c\'odigo, caf\'e e amizade.
+
+Por fim, \`a comunidade de \emph{software livre} --- em especial aos mantenedores do NumPy, OpenCV, Open3D e do template abntex2ime --- sem cuja generosidade este trabalho jamais teria sido vi\'avel.
+\end{agradecimentos}
+
+% --- Epigrafe ---
+\begin{epigrafe}
+    \vspace*{\fill}
+    \begin{flushright}
+        \textit{``A guerra \'e o reino da incerteza;\\
+        tr\^es quartos das coisas em que se baseia\\
+        a a\c{c}\~ao na guerra est\~ao envoltos\\
+        em uma n\'evoa de incerteza maior ou menor.''\\
+        --- Carl von Clausewitz, \emph{Da Guerra}, 1832}
+    \end{flushright}
+\end{epigrafe}
+
+% --- Resumo (PT) ---
+\setlength{\absparsep}{18pt}
+\begin{resumo}
+\SingleSpacing
+Este trabalho apresenta o projeto e a implementa\c{c}\~ao de um sistema de \emph{Caix\~ao de Areia com Realidade Aumentada} (\emph{AR Sandbox}) voltado ao treinamento militar em opera\c{c}\~oes no terreno. O sistema integra um sensor de profundidade Microsoft Kinect~v2, um projetor convencional e um Modelo Digital de Eleva\c{c}\~ao (MDE) de refer\^encia, fornecendo \emph{feedback} visual em tempo real --- \textbf{vermelho} para excesso de areia, \textbf{azul} para falta e \textbf{verde} para conformidade --- diretamente sobre a superf\'\i cie da areia. O motor matem\'atico realiza calibra\c{c}\~ao geom\'etrica autom\'atica baseada em decomposi\c{c}\~ao em valores singulares (SVD), constru\c{c}\~ao de bases ortonormais por Gram-Schmidt, transforma\c{c}\~oes afins homog\^eneas e proje\c{c}\~ao \emph{pinhole} de Tsai. A renderiza\c{c}\~ao emprega malha discretizada de $30 \times 30$ c\'elulas com agrega\c{c}\~ao espacial para filtragem estat\'\i stica do ru\'\i do do sensor. A arquitetura monol\'\i tica modularizada disp\~oe de cadeia de \emph{fallback} em quatro n\'\i veis (PyKinect2, Open3D, libfreenect2 e simula\c{c}\~ao interativa via \emph{mouse}), assegurando opera\c{c}\~ao mesmo na aus\^encia de hardware. A su\'\i te de testes automatizados conta com 26 casos cobrindo todos os contratos matem\'aticos. Foi tamb\'em identificado e corrigido um defeito de calibra\c{c}\~ao em ensaio de campo, formalizado pela introdu\c{c}\~ao de uma matriz de transla\c{c}\~ao $T_{\text{shift}}$ ao centro l\'ogico da mesa.
+
+\textbf{Palavras-chave}: \imprimirpalavraschave
+\end{resumo}
+
+% --- Abstract (EN) ---
+\begin{resumo}[Abstract]
+\begin{otherlanguage*}{english}
+\SingleSpacing
+This work presents the design and implementation of an \emph{Augmented Reality Sandbox} system aimed at military training in terrain operations. The system integrates a Microsoft Kinect v2 depth sensor, a conventional projector, and a reference Digital Elevation Model (DEM), providing real-time visual feedback --- \textbf{red} for excess sand, \textbf{blue} for shortage, and \textbf{green} for conformity --- projected directly onto the sand surface. The mathematical engine performs automatic geometric calibration based on singular value decomposition (SVD), Gram-Schmidt orthonormalization, homogeneous affine transformations, and Tsai's pinhole projection model. Rendering employs a $30 \times 30$ discretized grid with spatial aggregation for statistical noise filtering. The monolithic modular architecture features a four-tier fallback chain (PyKinect2, Open3D, libfreenect2, and interactive mouse-based simulation), ensuring operation even without hardware. The automated test suite comprises 26 cases covering all mathematical contracts. A calibration defect detected in field trials was also identified and corrected, formalized by the introduction of a translation matrix $T_{\text{shift}}$ to the logical table center.
+
+\vspace{\onelineskip}
+\noindent\textbf{Keywords}: \imprimirkeywords
+\end{otherlanguage*}
+\end{resumo}

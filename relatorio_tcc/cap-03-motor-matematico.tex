@@ -1,0 +1,201 @@
+% =====================================================================
+% cap-03-motor-matematico.tex — Capítulo 4: Motor Matemático
+% =====================================================================
+
+\chapter{Motor Matemático}
+\label{cap:motor}
+
+Este capítulo formaliza o \textit{pipeline} matemático que transforma
+uma nuvem bruta de pontos do sensor Kinect em uma malha de quadrados
+coloridos sobre a areia. Cada uma das quatro etapas é apresentada com
+rigor algébrico e relacionada à sua implementação no módulo
+\texttt{motor\_caixao\_areia.py}.
+
+\section{Passo 1 — Ajuste de Plano por SVD}
+\label{sec:passo1}
+
+Dada uma nuvem de $N$ pontos $\{\mathbf{p}_i\}_{i=1}^{N} \subset
+\mathbb{R}^{3}$ capturados pelo Kinect sobre a superfície da mesa, o
+problema é determinar o plano $\Pi: ax + by + cz + d = 0$ que melhor se
+ajusta a esses pontos no sentido dos mínimos quadrados ortogonais.
+
+A solução clássica procede em três etapas. Primeiro, calcula-se o
+centroide e a matriz centralizada
+\begin{equation}
+\bar{\mathbf{p}} = \frac{1}{N} \sum_{i=1}^{N} \mathbf{p}_i,
+\qquad
+M = \begin{bmatrix}
+(\mathbf{p}_1 - \bar{\mathbf{p}})^{T} \\
+\vdots \\
+(\mathbf{p}_N - \bar{\mathbf{p}})^{T}
+\end{bmatrix} \in \mathbb{R}^{N \times 3}.
+\end{equation}
+
+Em seguida, aplica-se a decomposição em valores singulares
+$M = U \Sigma V^{T}$ com $\Sigma = \text{diag}(\sigma_1, \sigma_2,
+\sigma_3)$ e $\sigma_1 \geq \sigma_2 \geq \sigma_3 \geq 0$. O vetor
+normal procurado é a última linha de $V^{T}$:
+\begin{equation}
+\mathbf{n} = V^{T}_{[3,:]}.
+\end{equation}
+
+Finalmente, o coeficiente $d$ é calculado pela substituição do
+centroide na equação do plano: $d = -\mathbf{n} \cdot \bar{\mathbf{p}}$.
+Por convenção, exige-se que $n_z > 0$ (vetor apontando para cima, em
+direção ao Kinect); caso contrário, $\mathbf{n}$ é negado.
+
+A função \texttt{ajustar\_plano\_svd()} encapsula esse procedimento e é
+coberta por quatro testes unitários que verificam (i) unicidade da
+normal, (ii) plano horizontal $z = 5$, (iii) plano inclinado e
+(iv) exceção para $N < 3$.
+
+\section{Passo 2 — Construção da Base da Mesa}
+\label{sec:passo2}
+
+A normal $\mathbf{n}$ define inequivocamente o eixo $Z_{\text{mesa}}$,
+mas a base ortonormal completa requer dois eixos adicionais $X_{\text{mesa}}$
+e $Y_{\text{mesa}}$ ortogonais entre si e a $\mathbf{n}$. A escolha
+desses eixos é livre a menos de rotação em torno da normal; adotamos a
+convenção mais simples possível, baseada em uma semente padrão.
+
+O algoritmo é o seguinte:
+
+\begin{enumerate}
+    \item $Z_{\text{mesa}} \leftarrow \mathbf{n} / \|\mathbf{n}\|$;
+    \item Escolhe-se uma semente $\mathbf{s} = (1, 0, 0)^{T}$. Se
+          $|\mathbf{s} \cdot Z_{\text{mesa}}| \geq 0{,}9$ (semente
+          quase paralela à normal), substitui-se por $(0, 1, 0)^{T}$;
+    \item Aplica-se Gram-Schmidt:
+          $X_{\text{mesa}} = \dfrac{\mathbf{s} - (\mathbf{s} \cdot Z_{\text{mesa}}) Z_{\text{mesa}}}{\| \mathbf{s} - (\mathbf{s} \cdot Z_{\text{mesa}}) Z_{\text{mesa}} \|}$;
+    \item Calcula-se $Y_{\text{mesa}} = Z_{\text{mesa}} \times
+          X_{\text{mesa}}$, garantindo automaticamente um sistema
+          dextrogiro.
+\end{enumerate}
+
+A ortonormalidade do conjunto $\{X_{\text{mesa}}, Y_{\text{mesa}},
+Z_{\text{mesa}}\}$ — isto é, $X \cdot Y = X \cdot Z = Y \cdot Z = 0$ e
+$\|X\| = \|Y\| = \|Z\| = 1$ — é assegurada por testes unitários
+dedicados (\texttt{TestConstruirBase}).
+
+\section{Passo 3 — Transformação Afim 4$\times$4}
+\label{sec:passo3}
+
+A transformação $T \in \mathbb{R}^{4 \times 4}$ que leva pontos do
+referencial do Kinect ao referencial da mesa empilha os eixos da mesa
+como linhas da matriz de rotação:
+\begin{equation}
+R = \begin{bmatrix}
+X_{\text{mesa}}^{T} \\
+Y_{\text{mesa}}^{T} \\
+Z_{\text{mesa}}^{T}
+\end{bmatrix},
+\qquad
+\mathbf{t} = -R \, \bar{\mathbf{p}},
+\qquad
+T = \begin{bmatrix} R & \mathbf{t} \\ \mathbf{0}^{T} & 1 \end{bmatrix}.
+\end{equation}
+
+\noindent A propriedade fundamental dessa construção é que, para
+qualquer ponto $\mathbf{p}$ pertencente ao plano da mesa, a coordenada
+transformada $z_{\text{mesa}} = 0$ — isto é, o plano da mesa torna-se o
+plano $XY$ do novo sistema. Essa invariante é verificada pelo teste
+\texttt{TestMatrizTransformacao}.
+
+\subsection{Composição com $T_{\text{shift}}$ — alinhamento ao centro lógico}
+\label{subsec:T-shift}
+
+A matriz $T$ acima leva o centroide $\bar{\mathbf{p}}$ à \emph{origem}
+$(0, 0, 0)$. Entretanto, a convenção interna de discretização e
+renderização (Capítulo~\ref{cap:rendering}) adota a mesa como o domínio
+$[0, L_x] \times [0, L_y]$, com a origem em um \emph{canto}. Sem ajuste,
+metade dos pontos da nuvem (aqueles com $x < 0$ ou $y < 0$) seria
+projetada fora do domínio e \emph{colapsada pelo \texttt{clip}} nas
+células de borda da grade — um defeito observado em testes preliminares
+de campo, no qual a projeção AR exibia apenas um pequeno retângulo
+correspondente ao quadrante positivo.
+
+A solução, identificada e corrigida durante a fase de validação, é
+compor $T$ com uma translação fixa que desloca o centroide para o
+centro lógico da mesa:
+\begin{equation}
+\label{eq:T-shift}
+T_{\text{shift}} =
+\begin{bmatrix}
+1 & 0 & 0 & L_x / 2 \\
+0 & 1 & 0 & L_y / 2 \\
+0 & 0 & 1 & 0 \\
+0 & 0 & 0 & 1
+\end{bmatrix},
+\qquad
+T_{\text{final}} = T_{\text{shift}} \cdot T.
+\end{equation}
+
+\noindent Após essa composição, o ponto físico que se encontra
+exatamente sob o sensor (centroide do plano detectado) cai em
+$(L_x/2, L_y/2)$, e a nuvem ocupa naturalmente $[0, L_x] \times [0,
+L_y]$. Adicionalmente, a função
+\texttt{discretizar\_nuvem\_em\_grade()} aplica um filtro
+\textit{\textbf{dentro}} que descarta pontos cujas coordenadas
+extrapolem o domínio físico da mesa, o que é típico do campo de visão
+do Kinect montado a 2,5~m (FOV horizontal de aproximadamente 70°
+cobre uma área maior do que a mesa).
+
+\section{Passo 4 — Projeção 3D$\to$2D pelo Modelo de Tsai}
+\label{sec:passo4}
+
+Os vértices da malha de quadrados (Capítulo~\ref{cap:rendering}) são
+projetados do referencial 3D da mesa para o plano 2D do projetor pela
+fórmula geral~\eqref{eq:pinhole}, com distorções óticas residuais
+$(k_1, k_2, p_1, p_2, k_3)$ encapsuladas pela função
+\texttt{cv2.projectPoints} do OpenCV.
+
+Em \emph{modo simulação} e em \emph{modo real}, os parâmetros
+intrínsecos e extrínsecos são configurados de forma a mapear o domínio
+físico $[0, L_x] \times [0, L_y]$ na janela de projeção. Adotando uma
+distância virtual da câmera $d_{\text{cam}} = 10$~m, $\mathbf{t}_{\text{ext}} =
+(0, 0, d_{\text{cam}})^{T}$ e $R_{\text{ext}} = I_3$, obtém-se
+\begin{equation}
+\label{eq:fxfy-virtual}
+f_x = \frac{W \cdot d_{\text{cam}}}{L_x}, \qquad
+f_y = \frac{H \cdot d_{\text{cam}}}{L_y},
+\qquad (c_x, c_y) = (0, 0),
+\end{equation}
+
+\noindent onde $(W, H)$ é a resolução do projetor. Substituindo em
+\eqref{eq:pinhole}, vê-se que o ponto $(x, y, 0)$ projeta-se exatamente
+em
+\begin{equation}
+u = \frac{W}{L_x} \, x, \qquad v = \frac{H}{L_y} \, y,
+\end{equation}
+
+\noindent o que é precisamente o mapeamento desejado de
+$[0, L_x] \times [0, L_y]$ para $[0, W] \times [0, H]$. Essa parametrização
+é compartilhada pelos dois modos de operação, o que simplifica a
+calibração e elimina assimetrias entre simulação e hardware real.
+
+\section{Discussão — Por que SVD e não RANSAC?}
+\label{sec:discussao-svd}
+
+Uma alternativa frequentemente empregada para o ajuste de plano é o
+algoritmo \textit{RANSAC}~\cite{fischler1981random}, robusto a
+\textit{outliers} mas computacionalmente mais oneroso. A escolha por
+SVD neste trabalho é justificada pelos seguintes argumentos:
+
+\begin{itemize}
+    \item A nuvem de calibração é capturada com a areia previamente
+          \emph{nivelada} (ou diretamente sobre o piso, em ensaio
+          preliminar), o que minimiza a presença de \textit{outliers};
+    \item O sensor Kinect~v2 possui ruído gaussiano de baixa magnitude
+          ($\sigma \approx 3$~mm), bem modelado pela hipótese subjacente
+          ao SVD;
+    \item A complexidade do SVD ($O(N \cdot \min(N,3)^2) = O(N)$ para
+          $N \gg 3$) é determinística, ao contrário das iterações
+          aleatórias do RANSAC;
+    \item A solução SVD é \emph{única} (a menos do sinal da normal,
+          tratado por convenção), o que facilita a verificação por
+          testes unitários com valores esperados \emph{hardcoded}.
+\end{itemize}
+
+\noindent Essa decisão é validada empiricamente: os 26 testes unitários
+do motor matemático passam consistentemente com as constantes
+algébricas explicitadas na suíte.

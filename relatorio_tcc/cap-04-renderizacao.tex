@@ -1,0 +1,190 @@
+% =====================================================================
+% cap-04-renderizacao.tex — Capítulo 5: Renderização e Emulador Interativo
+% =====================================================================
+
+\chapter{Renderização por Malha Discretizada e Emulador Interativo}
+\label{cap:rendering}
+
+Este capítulo descreve a estratégia de renderização adotada para
+projetar, em tempo real, o \emph{feedback} visual sobre a areia, e
+detalha o emulador interativo que permite a operação do sistema sem o
+sensor Kinect físico.
+
+\section{Motivação para a Discretização em Malha}
+\label{sec:motiv-malha}
+
+A primeira versão experimental do sistema projetava \emph{diretamente}
+cada ponto da nuvem do Kinect como um \emph{pixel} colorido. Essa
+abordagem revelou três deficiências severas:
+
+\begin{enumerate}
+    \item \textbf{Buracos visuais.} A densidade de pontos da nuvem é
+          insuficiente para preencher continuamente a área projetada,
+          resultando em uma textura ``pontilhada'' que prejudica a
+          legibilidade do \textit{feedback}.
+    \item \textbf{Ruído pixelizado.} O ruído do sensor produz cores
+          oscilantes pixel a pixel, gerando uma imagem trêmula e
+          desconfortável visualmente.
+    \item \textbf{Custo computacional.} A invocação de
+          \texttt{cv2.projectPoints} ou de equivalente para cada ponto
+          individual é ineficiente em $\Theta(N)$.
+\end{enumerate}
+
+A solução proposta substitui a renderização pontual por uma
+\textbf{discretização em malha regular}. Os pontos são agregados em
+células retangulares, cada célula é classificada por uma única cor e
+desenhada como um \emph{polígono preenchido} via
+\texttt{cv2.fillPoly}.
+
+\section{Definição Formal da Malha}
+\label{sec:malha}
+
+O domínio físico da mesa $[0, L_x] \times [0, L_y]$ é particionado em
+uma malha regular de $N_x \times N_y$ células retangulares (por padrão
+$N_x = N_y = 30$, totalizando 900 células). Cada célula $C_{i,j}$,
+com $i \in \{0, \ldots, N_y - 1\}$ e $j \in \{0, \ldots, N_x - 1\}$,
+ocupa o subdomínio
+\begin{equation}
+C_{i,j} = \big[ j \Delta x,\; (j+1) \Delta x \big]
+        \times \big[ i \Delta y,\; (i+1) \Delta y \big],
+\end{equation}
+
+\noindent com $\Delta x = L_x / N_x$ e $\Delta y = L_y / N_y$. Para a
+mesa de 1,5~m$\,\times\,$1,5~m com 30$\,\times\,$30 células, cada célula
+mede precisamente 5~cm$\,\times\,$5~cm. A malha de células gera
+$(N_x + 1)(N_y + 1) = 31 \times 31 = 961$ vértices distintos.
+
+\section{Agregação Espacial e Filtragem de Ruído}
+\label{sec:agregacao}
+
+Para cada célula $C_{i,j}$ define-se o conjunto de pontos da nuvem que
+nela se encontram:
+\begin{equation}
+\mathcal{P}_{i,j} = \big\{ \mathbf{p}_k = (x_k, y_k, z_k) :
+    (x_k, y_k) \in C_{i,j} \big\},
+\end{equation}
+
+\noindent e a altura representativa da célula é a média aritmética dos
+valores $Z$ dos pontos contidos:
+\begin{equation}
+\bar{Z}^{\text{real}}_{i,j} = \frac{1}{|\mathcal{P}_{i,j}|}
+        \sum_{\mathbf{p}_k \in \mathcal{P}_{i,j}} z_k.
+\end{equation}
+
+Sob a hipótese de ruído gaussiano independente e identicamente
+distribuído com desvio padrão $\sigma$, o desvio padrão da estimativa
+da média é
+\begin{equation}
+\sigma_{\bar{Z}_{i,j}} = \frac{\sigma}{\sqrt{|\mathcal{P}_{i,j}|}},
+\end{equation}
+
+\noindent o que evidencia a \emph{filtragem estatística} obtida pela
+agregação. Tipicamente, com a resolução de profundidade do Kinect~v2 e a
+mesa coberta integralmente, cada célula recebe entre dezenas e centenas
+de pontos, reduzindo o ruído em mais de uma ordem de grandeza.
+
+A implementação é totalmente vetorizada via NumPy, dispensando laços
+\textit{Python}. As somas e contagens por célula são acumuladas em
+duas matrizes $N_y \times N_x$ pela função \texttt{numpy.add.at}.
+Células sem pontos ($|\mathcal{P}_{i,j}| = 0$) são marcadas com
+\texttt{NaN} e simplesmente \emph{não renderizadas} no
+\textit{frame} corrente.
+
+\section{Regra de Coloração}
+\label{sec:cor}
+
+O centro geométrico da célula $C_{i,j}$,
+$\mathbf{c}_{i,j} = ((j + \tfrac{1}{2}) \Delta x, (i + \tfrac{1}{2}) \Delta y)$,
+é usado para consultar a altura alvo do MDE:
+$Z^{\text{MDE}}_{i,j} = \texttt{obter\_z\_alvo}(\mathbf{c}_{i,j})$.
+A cor da célula segue então a regra parametrizada pela tolerância
+$\tau$ (padrão: $\tau = 0{,}02$~m, equivalente a 2~cm):
+\begin{equation}
+\text{cor}(i, j) = \begin{cases}
+\textbf{Vermelho} & \text{se } \bar{Z}^{\text{real}}_{i,j} > Z^{\text{MDE}}_{i,j} + \tau \\
+\textbf{Azul}     & \text{se } \bar{Z}^{\text{real}}_{i,j} < Z^{\text{MDE}}_{i,j} - \tau \\
+\textbf{Verde}    & \text{caso contrário}
+\end{cases}
+\end{equation}
+
+\noindent A interpretação operacional é direta: \textbf{Vermelho}
+indica excesso de areia (\emph{cavar}), \textbf{Azul} indica falta
+(\emph{preencher}) e \textbf{Verde} indica conformidade com o MDE
+dentro da tolerância (\emph{OK}).
+
+\section{Projeção em Lote e Rasterização}
+\label{sec:rasterizacao}
+
+Os 961 vértices da malha 3D, todos com $Z = 0$ por estarem no plano da
+mesa, são empilhados em uma única matriz $\mathbb{R}^{961 \times 3}$ e
+projetados em um \emph{único} chamado a \texttt{cv2.projectPoints}, o
+que corresponde a apenas \emph{uma} invocação de
+\texttt{cv2.projectPoints} por \textit{frame}. Em seguida, cada célula
+é desenhada como um quadrilátero preenchido pelos seus quatro vértices
+projetados:
+\begin{equation}
+\text{quad}(i,j) = \big[ V_{i,j},\; V_{i,j+1},\; V_{i+1,j+1},\; V_{i+1,j} \big].
+\end{equation}
+
+\noindent O traçado é realizado por
+\texttt{cv2.fillPoly(imagem, [quad], cor)}, que é uma rotina
+otimizada nativamente em C++. O custo total de renderização por
+\emph{frame} é, portanto, $O(N_x \cdot N_y)$ chamadas leves a
+\texttt{fillPoly}, em vez dos $\Theta(N)$ pontos individuais da
+abordagem ingênua.
+
+\section{Emulador Interativo de Areia}
+\label{sec:emulador}
+
+\subsection{Estado persistente da areia virtual}
+
+A classe \texttt{KinectSensor}, quando em modo simulação, mantém uma
+matriz de alturas persistente $\mathbf{H} \in \mathbb{R}^{R \times R}$
+(onde $R = 50$ é a resolução padrão), inicializada uniformemente em
+$h_{\max} / 2 = 0{,}15$~m, simulando uma caixa preenchida com areia
+nivelada na metade da profundidade máxima.
+
+A cada chamada de \texttt{capturar\_nuvem()}, a função reconstrói a
+nuvem $\{(x_j, y_i, H_{i,j})\}$ a partir do estado corrente da matriz
+$\mathbf{H}$, refletindo imediatamente quaisquer modificações realizadas
+pelo \emph{mouse}.
+
+\subsection{Modelo gaussiano da pá virtual}
+
+Ao receber um evento de \emph{mouse} na posição física $(x_m, y_m)$ da
+mesa, o sistema atualiza $\mathbf{H}$ pela regra
+\begin{equation}
+H_{i,j}^{(t+1)} = \text{clip}\!\left(
+H_{i,j}^{(t)} \pm \alpha \exp\!\left(
+-\frac{(x_j - x_m)^2 + (y_i - y_m)^2}{2\sigma^2}
+\right), 0, h_{\max} \right),
+\end{equation}
+
+\noindent com sinal $+$ ao preencher (botão direito) e $-$ ao cavar
+(botão esquerdo). Os parâmetros padrão são $\alpha = 0{,}008$~m
+(deslocamento por evento) e $\sigma = r/2 = 0{,}05$~m (raio de ação
+$r = 0{,}10$~m).
+
+A escolha do perfil gaussiano produz deformações suaves e visualmente
+naturais, em contraste com escavações cilíndricas ou retangulares. Como
+mais de 86\% da energia do operador concentra-se dentro do raio $r$
+(integrando-se a gaussiana 2D até esse raio, obtém-se
+$1 - e^{-2} \approx 0{,}865$), o controle ergonômico é direto.
+
+\subsection{Mapeamento \textit{pixel}$\to$coordenada física}
+
+O \textit{callback} de \emph{mouse}, registrado via
+\texttt{cv2.setMouseCallback}, converte cada coordenada de \emph{pixel}
+$(u, v)$ em coordenada física $(x_{\text{mesa}}, y_{\text{mesa}})$
+proporcionalmente às dimensões correntes da janela
+(\texttt{cv2.getWindowImageRect}):
+\begin{equation}
+x_{\text{mesa}} = \frac{u}{W_{\text{janela}}} \cdot L_x,
+\qquad
+y_{\text{mesa}} = \frac{v}{H_{\text{janela}}} \cdot L_y.
+\end{equation}
+
+\noindent O sistema trata graciosamente eventos fora da área da imagem
+(simplesmente ignorados) e dimensões de janela inválidas (fallback à
+resolução nominal do projetor). O \emph{callback} é silenciosamente
+ignorado em modo real, evitando interferência com o sensor físico.
