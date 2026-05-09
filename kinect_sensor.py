@@ -44,8 +44,11 @@ _os.environ['PATH'] = (
 )
 # Python 3.8+ exige add_dll_directory para carregar DLLs externas
 if hasattr(_os, 'add_dll_directory'):
-    _os.add_dll_directory(_SDK_PATH)
-    _os.add_dll_directory(_SDK_PATH + r"\Redist\amd64")
+    try:
+        _os.add_dll_directory(_SDK_PATH)
+        _os.add_dll_directory(_SDK_PATH + r"\Redist\amd64")
+    except (FileNotFoundError, OSError):
+        pass  # SDK não instalado — sistema usará modo simulação
 # ────────────────────────────────────────────────────────────────
 
 import logging
