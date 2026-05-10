@@ -8,13 +8,17 @@ Como rodar:
     python diagnostico_kinect.py
 """
 import os, sys
-sdk = r"C:\Program Files\Microsoft SDKs\Kinect\v2.0_1409"
-os.environ['PATH'] = sdk + ";" + sdk + r"\Redist\amd64" + ";" + os.environ['PATH']
-# Recarrega o PATH no processo atual (Windows específico)
-if hasattr(os, 'add_dll_directory'):
-    os.add_dll_directory(sdk)
-    os.add_dll_directory(sdk + r"\Redist\amd64")
 
+sdk = r"C:\Program Files\Microsoft SDKs\Kinect\v2.0_1409"
+redist = sdk + r"\Redist\KinectTools\x64"
+
+# Adiciona ao PATH só os caminhos que existem
+for path in [sdk, redist]:
+
+    if os.path.exists(path):
+        os.environ['PATH'] = path + ";" + os.environ['PATH']
+        if hasattr(os, 'add_dll_directory'):
+            os.add_dll_directory(path)
 print("=" * 55)
 print("  DIAGNÓSTICO KINECT V2")
 print("=" * 55)

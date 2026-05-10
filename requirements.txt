@@ -2,12 +2,12 @@
 # Instalar com:  pip install -r requirements.txt
 
 # Visão computacional e álgebra linear (obrigatório)
-numpy==2.4.4
-opencv-python==4.13.0.92
+numpy==1.26.4
+opencv-python==4.11.0.86
 
 # Sensor Kinect v2 via SDK Microsoft (obrigatório no modo real)
 pykinect2==0.1.0
-comtypes==1.4.16
+comtypes==1.3.1
 
 # Leitura de GeoTIFF / MDE (opcional — sem isto usa Morro Gaussiano)
 rasterio==1.5.0

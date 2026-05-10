@@ -564,8 +564,8 @@ Pixel esperado: (320, 240) — centro da imagem  ✓
 ### 9.1 Instalação
 
 ```bash
-# Obrigatórias
-pip install numpy opencv-python
+# Obrigatórias (versões exatas para compatibilidade com pykinect2 + Python 3.12)
+pip install "numpy==1.26.4" opencv-python "comtypes==1.3.1" pykinect2
 
 # Opcionais (GeoTIFF real, interpolação, nuvem RGBD)
 pip install rasterio scipy open3d
@@ -625,5 +625,5 @@ Saída esperada: **25 passed, 1 skipped** (Open3D ausente no ambiente de teste).
 ---
 
 > **Documento gerado em:** Maio de 2026
-> **Versão:** 3.1 — Correção do modo real (deslocamento ao centro lógico + filtro de FOV)
+> **Versão:** 3.2 — Compatibilidade Python 3.12 + correções pykinect2 (numpy 1.26.4, comtypes 1.3.1)
 > **Sistema:** Finalizado, testado e pronto para defesa

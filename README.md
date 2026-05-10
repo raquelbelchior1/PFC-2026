@@ -2,7 +2,7 @@
 
 ![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue?logo=python&logoColor=white)
 ![OpenCV](https://img.shields.io/badge/OpenCV-4.x-green?logo=opencv&logoColor=white)
-![NumPy](https://img.shields.io/badge/NumPy-2.x-013243?logo=numpy&logoColor=white)
+![NumPy](https://img.shields.io/badge/NumPy-1.26.4-013243?logo=numpy&logoColor=white)
 ![Testes](https://img.shields.io/badge/Testes_Unitários-26_passing-brightgreen)
 ![Licença](https://img.shields.io/badge/Licença-Acadêmica-lightgrey)
 
@@ -156,15 +156,17 @@ pip install -r requirements.txt
 ```
 
 O `requirements.txt` inclui:
-
-| Pacote | Uso |
-|---|---|
-| `numpy`, `opencv-python` | Álgebra linear e visão computacional — **obrigatório** |
-| `pykinect2`, `comtypes` | Kinect v2 via SDK Microsoft — necessário apenas com hardware real |
-| `rasterio` e dependências | Leitura de GeoTIFF — opcional (sem ele usa Morro Gaussiano sintético) |
-| `pytest` | Testes unitários — opcional |
-
-> **Nota:** o Kinect v2 também requer o [Kinect for Windows SDK v2](https://www.microsoft.com/en-us/download/details.aspx?id=44561) instalado separadamente no Windows.
+ 
+| Pacote | Versão exata | Uso |
+|---|---|---|
+| `numpy` | **1.26.4** | Álgebra linear — **obrigatório** (não usar 2.x) |
+| `opencv-python` | 4.x | Visão computacional — **obrigatório** |
+| `comtypes` | **1.3.1** | Interface COM do Kinect — **obrigatório** (não usar 1.4.x) |
+| `pykinect2` | qualquer | Kinect v2 via SDK Microsoft — necessário apenas com hardware real |
+| `rasterio` e dependências | qualquer | Leitura de GeoTIFF — opcional (sem ele usa Morro Gaussiano sintético) |
+| `pytest` | qualquer | Testes unitários — opcional |
+ 
+> **Nota:** o Kinect v2 também requer o [Kinect for Windows SDK v2](https://www.microsoft.com/en-us/download/details.aspx?id=44561) e o [Kinect for Windows Runtime v2](https://www.microsoft.com/en-us/download/details.aspx?id=44559) instalados separadamente no Windows. Reinicie o PC após instalar ambos.
 
 ---
 
@@ -283,6 +285,72 @@ python -m unittest test_motor_caixao -v
 | `TestPipeline` | 2 | Integração completa Passos 1+2 |
 
 ---
+## Solução de Problemas — pykinect2 + Python 3.12
+ 
+O `pykinect2` foi escrito para Python 2/3.6 e requer correções manuais para funcionar no Python 3.12. Após instalar os pacotes, aplique os patches abaixo nos arquivos em `C:\Python312\Lib\site-packages\pykinect2\`.
+ 
+### `PyKinectV2.py` — 3 correções
+ 
+**1. `numpy.distutils` removido no NumPy 2.0+ (linha ~24)**
+ 
+```python
+# DE:
+import numpy.distutils.system_info as sysinfo
+ 
+# PARA:
+try:
+    import numpy.distutils.system_info as sysinfo
+except ImportError:
+    class sysinfo:
+        platform_bits = 64
+```
+ 
+**2. `sizeof(tagSTATSTG)` incorreto no Python 3.12 (linha ~2216)**
+ 
+```python
+# DE:
+assert sizeof(tagSTATSTG) == required_size, sizeof(tagSTATSTG)
+ 
+# PARA:
+assert sizeof(tagSTATSTG) == 80, sizeof(tagSTATSTG)
+```
+ 
+**3. `_check_version` incompatível com comtypes 1.3.1 (linha ~2874)**
+ 
+```python
+# DE:
+from comtypes import _check_version; _check_version('')
+ 
+# PARA:
+# from comtypes import _check_version; _check_version('')
+```
+ 
+### `PyKinectRuntime.py` — 2 correções
+ 
+**4. `time.clock()` removido no Python 3.8+ — substituir todas as ocorrências**
+ 
+```python
+# DE:  time.clock()
+# PARA: time.perf_counter()
+```
+ 
+**5. `dtype=numpy.object` removido no NumPy 1.24+ — substituir todas as ocorrências**
+ 
+```python
+# DE:  dtype=numpy.object
+# PARA: dtype=object
+```
+ 
+### Verificar instalação
+ 
+```powershell
+python --version                                          # 3.12.x 64-bit
+python -c "import numpy; print(numpy.__version__)"       # 1.26.4
+python -c "import comtypes; print(comtypes.__version__)" # 1.3.1
+python diagnostico_kinect.py                              # todos os 6 passos ✓
+```
+ 
+---
 
 ## Referências
 
@@ -300,5 +368,6 @@ python -m unittest test_motor_caixao -v
 
 | Versão | Data | Mudança |
 |---|---|---|
+| **3.2** | Maio/2026 | **Compatibilidade Python 3.12** — correções nos arquivos do pykinect2: mock de `numpy.distutils`, `sizeof(tagSTATSTG)==80`, comentar `_check_version`, substituir `time.clock()` por `time.perf_counter()` e `dtype=numpy.object` por `dtype=object`. Versões fixadas: numpy 1.26.4 e comtypes 1.3.1. |
 | **3.1** | Maio/2026 | **Correção do modo real** — após calibração SVD, a matriz $T$ é composta com uma translação $T_{\text{shift}}$ que mapeia o centroide do plano detectado para o centro lógico da mesa $(L_x/2, L_y/2)$, evitando que metade dos pontos (com coordenadas negativas) seja colapsada nas células de borda. Adicionado também filtro `dentro` em `discretizar_nuvem_em_grade()` para descartar pontos do FOV do Kinect que extrapolem o domínio físico da mesa, e configuração de projeção compatível em modo real (mesmo mapeamento usado na simulação). Estes ajustes eliminam o artefato visual em que apenas um pequeno retângulo era projetado após calibrar com a câmera apontada para o chão. |
 | **3.0** | Março/2026 | Versão final com Malha Discretizada e Emulador Interativo. |
