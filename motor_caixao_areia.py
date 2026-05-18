@@ -80,6 +80,131 @@ def ajustar_plano_svd(pontos: np.ndarray) -> Tuple[np.ndarray, float, np.ndarray
     return normal, d, centroide
 
 
+def ajustar_plano_ransac(
+    pontos: np.ndarray,
+    n_iter: int = 1000,
+    limiar_dist: float = 0.01,
+    min_inliers_ratio: float = 0.3,
+    semente_rng: Optional[int] = None,
+) -> Tuple[np.ndarray, float, np.ndarray]:
+    """Ajusta um plano à nuvem de pontos usando RANSAC + refinamento por SVD.
+
+    Aplica RANSAC para identificar o maior conjunto de pontos coplanares
+    (inliers) e, em seguida, refina o plano com ``ajustar_plano_svd``
+    sobre esses inliers.  Isso elimina os pontos fora do caixão (paredes,
+    chão externo, objetos) antes de aplicar os mínimos quadráticos,
+    melhorando substancialmente a qualidade da calibração quando a cena
+    contém ruído ou pontos espúrios.
+
+    Premissa: a maioria dos pontos capturados pertence ao fundo plano
+    do caixão de areia.  O RANSAC explora essa premissa para separar
+    inliers de outliers de forma robusta.
+
+    Parameters
+    ----------
+    pontos : np.ndarray, shape (N, 3)
+        Nuvem de pontos 3D em metros (coordenadas do Kinect).
+    n_iter : int
+        Número de iterações RANSAC.  1000 oferece boa cobertura
+        estatística para nuvens com ~30 % de inliers.
+    limiar_dist : float
+        Distância máxima (metros) de um ponto ao plano para ser
+        considerado inlier.  0,01 m (1 cm) é adequado para o
+        Kinect v2 (ruído ~1–3 mm) com areia irregular (~5 mm).
+    min_inliers_ratio : float
+        Fração mínima de inliers (em relação ao total de pontos)
+        necessária para aceitar o resultado.  Levanta ``RuntimeError``
+        se nenhuma iteração atingir esse mínimo.
+    semente_rng : int | None
+        Semente para o gerador aleatório (reprodutibilidade).
+        ``None`` usa o estado atual do NumPy.
+
+    Returns
+    -------
+    normal : np.ndarray, shape (3,)
+        Vetor normal unitário do plano (a, b, c).
+    d : float
+        Coeficiente *d* da equação  ax + by + cz + d = 0.
+    centroide : np.ndarray, shape (3,)
+        Centroide dos **inliers** (não da nuvem completa).
+
+    Raises
+    ------
+    ValueError
+        Se ``pontos`` tiver menos de 3 linhas.
+    RuntimeError
+        Se nenhuma iteração encontrar inliers suficientes
+        (``>= min_inliers_ratio * N``).
+    """
+    N = pontos.shape[0]
+    if N < 3:
+        raise ValueError("São necessários pelo menos 3 pontos para ajustar um plano.")
+
+    rng = np.random.default_rng(semente_rng)
+    min_inliers_abs = int(np.ceil(min_inliers_ratio * N))
+
+    # Pesos Gaussianos que favorecem pontos próximos ao centro XY da nuvem.
+    # Como o Kinect está centralizado sobre a areia, o centro da projeção
+    # coincide aproximadamente com o centro do caixão — região mais confiável.
+    # Pontos nas bordas (paredes, chão externo) recebem peso menor.
+    centro_xy = pontos[:, :2].mean(axis=0)
+    dist_centro = np.linalg.norm(pontos[:, :2] - centro_xy, axis=1)
+    sigma_xy = dist_centro.std()
+    if sigma_xy < 1e-9:
+        pesos = None  # nuvem degenerada — amostragem uniforme
+    else:
+        pesos = np.exp(-0.5 * (dist_centro / sigma_xy) ** 2)
+        pesos /= pesos.sum()
+
+    best_mask = np.zeros(N, dtype=bool)
+    best_count = 0
+
+    for _ in range(n_iter):
+        # 1. Sortear 3 pontos distintos com viés para o centro
+        idx = rng.choice(N, size=3, replace=False, p=pesos)
+        p0, p1, p2 = pontos[idx[0]], pontos[idx[1]], pontos[idx[2]]
+
+        # 2. Calcular normal pelo produto vetorial
+        v1 = p1 - p0
+        v2 = p2 - p0
+        normal_c = np.cross(v1, v2)
+        norm = np.linalg.norm(normal_c)
+        if norm < 1e-12:
+            continue  # pontos colineares — tentar novamente
+        normal_c = normal_c / norm
+
+        # 3. Coeficiente d (plano passa por p0)
+        d_c = -float(np.dot(normal_c, p0))
+
+        # 4. Distância de todos os pontos ao plano (vetorizado)
+        distancias = np.abs(pontos @ normal_c + d_c)
+
+        # 5. Máscara de inliers
+        mascara = distancias < limiar_dist
+        contagem = int(mascara.sum())
+
+        if contagem > best_count:
+            best_count = contagem
+            best_mask = mascara
+
+    if best_count < min_inliers_abs:
+        raise RuntimeError(
+            f"RANSAC não encontrou plano com inliers suficientes: "
+            f"{best_count}/{N} ({100.0 * best_count / N:.1f} %) < "
+            f"mínimo {100.0 * min_inliers_ratio:.0f} %.  "
+            "Verifique o posicionamento do sensor ou aumente limiar_dist."
+        )
+
+    import logging as _log
+    _log.getLogger("motor_caixao_areia").info(
+        "RANSAC: %d/%d pontos inliers (%.1f %%) — refinando com SVD.",
+        best_count, N, 100.0 * best_count / N,
+    )
+
+    # 6. Refinamento: SVD apenas sobre os inliers
+    return ajustar_plano_svd(pontos[best_mask])
+
+
 # ============================================================================
 # 2. SISTEMA DE COORDENADAS — Kinect → Mesa (Gram-Schmidt)
 # ============================================================================
@@ -697,7 +822,7 @@ def pipeline_plano_e_base(
     -------
     normal, d, centroide, X_mesa, Y_mesa, Z_mesa, T
     """
-    normal, d, centroide = ajustar_plano_svd(pontos)
+    normal, d, centroide = ajustar_plano_ransac(pontos)
     X_mesa, Y_mesa, Z_mesa = construir_base_mesa(normal, semente)
     T = montar_matriz_transformacao(X_mesa, Y_mesa, Z_mesa, centroide)
     return normal, d, centroide, X_mesa, Y_mesa, Z_mesa, T
