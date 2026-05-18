@@ -99,8 +99,8 @@ O resultado é uma **projeção sólida e limpa** sobre a areia — como "curvas
 │ (OOP + Fallback  │ │ (Álgebra     │ │ AdaptadorMDE  │
 │  + Grade Persist.│ │  Linear +    │ │ (GeoTIFF +    │
 │  + modificar_    │ │  Discretiz.) │ │  Fallback     │
-│  areia())        │ │ SVD, Gram-   │ │  Gaussiano +  │
-│                  │ │ Schmidt,     │ │  Heatmap)     │
+│  areia())        │ │ RANSAC+SVD,  │ │  Gaussiano +  │
+│                  │ │ Gram-Schmidt,│ │  Heatmap)     │
 │ Open3D/freenect  │ │ Tsai, Grade  │ │               │
 │ → Simulação auto │ │ fillPoly     │ │               │
 └──────────────────┘ └──────────────┘ └───────────────┘
@@ -109,7 +109,7 @@ O resultado é uma **projeção sólida e limpa** sobre a areia — como "curvas
 | Camada | Módulo | Responsabilidade |
 |---|---|---|
 | **Hardware** | `kinect_sensor.py` | Classe `KinectSensor`: Open3D → freenect → simulação com **grade persistente** + `modificar_areia()` |
-| **Lógica** | `motor_caixao_areia.py` | Álgebra linear pura: SVD, Gram-Schmidt, Transformação 4×4, Tsai, **discretização em grade**, coloração por célula, `fillPoly` |
+| **Lógica** | `motor_caixao_areia.py` | Álgebra linear pura: **RANSAC + SVD**, Gram-Schmidt, Transformação 4×4, Tsai, **discretização em grade**, coloração por célula, `fillPoly` |
 | **Dados** | `mde_cartografia.py` | Classe `AdaptadorMDE`: GeoTIFF via rasterio → fallback Morro Gaussiano + heatmap |
 | **Orquestração** | `main.py` | Máquina de estados, dual-window, **mouse callback** (`cv2.setMouseCallback`) |
 
@@ -121,7 +121,7 @@ O resultado é uma **projeção sólida e limpa** sobre a areia — como "curvas
 PFC-2026/
 ├── main.py                    # Máquina de Estados + Mouse Callback — ponto de entrada
 ├── kinect_sensor.py           # KinectSensor OOP com grade persistente + modificar_areia()
-├── motor_caixao_areia.py      # Motor matemático (SVD, Gram-Schmidt, Tsai, Grade Discretizada)
+├── motor_caixao_areia.py      # Motor matemático (RANSAC + SVD, Gram-Schmidt, Tsai, Grade Discretizada)
 ├── mde_cartografia.py         # AdaptadorMDE: GeoTIFF + fallback Gaussiano + heatmap
 │
 ├── test_motor_caixao.py       # 26 testes unitários automatizados
@@ -231,7 +231,7 @@ FORCAR_SIMULACAO     = False             # True para ignorar Kinect
 
 | Tecla | Ação |
 |---|---|
-| **C** | Calibrar (SVD + Gram-Schmidt + Matriz 4×4) |
+| **C** | Calibrar (RANSAC + SVD + Gram-Schmidt + Matriz 4×4) |
 | **F** | Toggle tela cheia na janela Projecao_Areia |
 | **Q** / **ESC** | Encerrar |
 
@@ -249,7 +249,7 @@ FORCAR_SIMULACAO     = False             # True para ignorar Kinect
 | Passo | Ação | Resultado esperado |
 |---|---|---|
 | 1 | `python main.py` | Duas janelas abrem: **Projecao_Areia** e **Gabarito_MDE** |
-| 2 | Pressionar **C** | Calibração automática (modo simulação) ou SVD (modo real) |
+| 2 | Pressionar **C** | Calibração automática (modo simulação) ou RANSAC + SVD (modo real) |
 | 3 | Observar **Projecao_Areia** | Grade contínua de quadrados coloridos: bordas vermelhas, anel verde, centro azul |
 | 4 | Observar **Gabarito_MDE** | Heatmap do Morro Gaussiano (ou GeoTIFF real) como referência |
 | 5 | **Arrastar botão direito** no centro azul | Quadrados mudam de azul → verde (areia subindo até o alvo) |
@@ -368,6 +368,8 @@ python diagnostico_kinect.py                              # todos os 6 passos �
 
 | Versão | Data | Mudança |
 |---|---|---|
+| **3.3** | Maio/2026 | **Calibração robusta com RANSAC** — adicionada função `ajustar_plano_ransac()` em `motor_caixao_areia.py`, aplicada antes dos mínimos quadráticos via SVD. O RANSAC (1000 iterações, limiar 1 cm, mínimo 30 % de inliers) identifica o conjunto dominante de pontos coplanares (fundo do caixão) e descarta outliers de paredes, chão externo e bordas. A amostragem dos candidatos é ponderada por uma Gaussiana centrada na região central da nuvem, refletindo o fato de o Kinect estar centralizado sobre o caixão. O refinamento SVD é executado somente sobre os inliers selecionados. `pipeline_plano_e_base()` foi atualizado para usar RANSAC de forma transparente; nenhuma alteração em `main.py`. |
+| **3.3** | Maio/2026 | **Calibração robusta com RANSAC** — adicionada função `ajustar_plano_ransac()` em `motor_caixao_areia.py`, aplicada antes dos mínimos quadráticos via SVD. O RANSAC (1000 iterações, limiar 1 cm, mínimo 30 % de inliers) identifica o conjunto dominante de pontos coplanares (fundo do caixão) e descarta outliers de paredes, chão externo e bordas. A amostragem dos candidatos é ponderada por uma Gaussiana centrada na região central da nuvem, refletindo que o Kinect está centralizado sobre o caixão. O refinamento SVD é executado somente sobre os inliers selecionados. `pipeline_plano_e_base()` atualizado de forma transparente; `main.py` sem alterações. |
 | **3.2** | Maio/2026 | **Compatibilidade Python 3.12** — correções nos arquivos do pykinect2: mock de `numpy.distutils`, `sizeof(tagSTATSTG)==80`, comentar `_check_version`, substituir `time.clock()` por `time.perf_counter()` e `dtype=numpy.object` por `dtype=object`. Versões fixadas: numpy 1.26.4 e comtypes 1.3.1. |
 | **3.1** | Maio/2026 | **Correção do modo real** — após calibração SVD, a matriz $T$ é composta com uma translação $T_{\text{shift}}$ que mapeia o centroide do plano detectado para o centro lógico da mesa $(L_x/2, L_y/2)$, evitando que metade dos pontos (com coordenadas negativas) seja colapsada nas células de borda. Adicionado também filtro `dentro` em `discretizar_nuvem_em_grade()` para descartar pontos do FOV do Kinect que extrapolem o domínio físico da mesa, e configuração de projeção compatível em modo real (mesmo mapeamento usado na simulação). Estes ajustes eliminam o artefato visual em que apenas um pequeno retângulo era projetado após calibrar com a câmera apontada para o chão. |
 | **3.0** | Março/2026 | Versão final com Malha Discretizada e Emulador Interativo. |
