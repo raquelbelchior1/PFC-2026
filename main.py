@@ -14,8 +14,23 @@ Dimensões físicas reais
 
 Janelas de saída
 ----------------
-- **Projecao_Areia** — feedback AR do projetor (vermelho/azul/verde)
-- **Gabarito_MDE** — heatmap de referência do MDE sendo replicado
+- **Projecao_Areia** — feedback AR do projetor (vermelho/azul/verde).
+  Fica **limpa**, sem nenhum texto/HUD/legenda sobreposto — é
+  projetada fisicamente sobre a areia, então qualquer overlay
+  atrapalharia a leitura da grade de cores.
+- **Gabarito_MDE** — heatmap de referência do MDE sendo replicado,
+  com a legenda de cores BGR e o HUD de estado (mapa selecionado,
+  calibração, pá virtual, FPS) sobrepostos — janela de controle do
+  operador, nunca projetada.
+
+Mapas Sintéticos ("Cubo Central" / "Morro Gaussiano")
+------------------------------------------------------
+Quando nenhum GeoTIFF é carregado, o sistema usa um dos dois mapas
+sintéticos de demonstração — ambos gerados dinamicamente a partir das
+dimensões físicas reais da mesa ativa (``LARGURA_MESA`` ×
+``COMPRIMENTO_MESA`` × ``PROFUNDIDADE_CAIXA``), garantindo alinhamento
+com o caixão físico.  A tecla **M** alterna entre os dois em tempo
+real, a qualquer momento (IDLE ou AR_LOOP).
 
 Calibração da Tampa ("Lid Calibration")
 ----------------------------------------
@@ -43,9 +58,12 @@ IDLE
     Exibe o mapa de profundidade colorido enquanto aguarda o comando
     de calibração.  Tecla **C** → transiciona para CALIBRACAO.
 CALIBRACAO
-    Captura a nuvem de pontos da tampa plana → SVD → Gram-Schmidt →
-    Matriz 4×4 (``T_final``) → salva em ``calibration_data.json``.
-    Ao concluir, transiciona automaticamente para AR_LOOP.
+    Captura a nuvem de pontos da tampa plana (que inclui moldura, piso
+    e ruído da sala, pois o FOV do Kinect é mais largo que o caixão)
+    → RANSAC (isola o plano dominante da tampa) → SVD (refina a normal
+    sobre os inliers) → Gram-Schmidt → Matriz 4×4 (``T_final``) → salva
+    em ``calibration_data.json``.  Ao concluir, transiciona
+    automaticamente para AR_LOOP.
 AR_LOOP
     Loop contínuo: captura → transforma → compara MDE → colore → projeta.
     Tecla **C** → volta para CALIBRACAO.
@@ -71,6 +89,16 @@ from tkinter import filedialog, messagebox
 import cv2
 import numpy as np
 
+# Evita UnicodeEncodeError em consoles Windows cp1252 ao imprimir
+# símbolos (✓, ⚠, →, ∈, ×) usados nas mensagens de status do sistema —
+# ambiente típico de uma instalação "limpa" usada na apresentação ao vivo.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
 # ── Camada de hardware ────────────────────────────────────────────────
 from kinect_sensor import KinectSensor
 
@@ -88,7 +116,7 @@ from motor_caixao_areia import (
 )
 
 # ── Adaptador MDE ────────────────────────────────────────────────────
-from mde_cartografia import AdaptadorMDE
+from mde_cartografia import AdaptadorMDE, TIPO_MAPA_CUBO, TIPO_MAPA_GAUSSIANA
 
 
 # =====================================================================
@@ -102,16 +130,13 @@ gera uma superfície sintética automaticamente."""
 RESOLUCAO_PROJETOR: tuple[int, int] = (640, 480)
 """``(largura, altura)`` em pixels da janela de projeção."""
 
-TOLERANCIA_COR: float = 0.01
-""""0.02"""
+TOLERANCIA_COR: float = 0.02
 """Tolerância em metros (2 cm) para a classificação Vermelho/Azul/Verde."""
 
-LARGURA_MESA: float = 0.45 
-"""1.50"""
+LARGURA_MESA: float = 1.50
 """Dimensão X da caixa de areia em metros (1,5 m)."""
 
-COMPRIMENTO_MESA: float = 0.48
-"""1.50"""
+COMPRIMENTO_MESA: float = 1.50
 """Dimensão Y da caixa de areia em metros (1,5 m)."""
 
 PROFUNDIDADE_CAIXA: float = 0.20
@@ -119,14 +144,23 @@ PROFUNDIDADE_CAIXA: float = 0.20
 especificação: a areia ocupa sempre Z_mesa ∈ [-0.20 m, 0.0 m], onde
 0.0 m é o nível da tampa de calibração (topo) e -0.20 m é o fundo."""
 
-ALTURA_KINECT: float = 0.6
-"""2.50"""
+ALTURA_KINECT: float = 2.50
 """Altura de montagem do Kinect acima do nível da tampa (Z_mesa = 0),
 em metros."""
 
 CAMINHO_CALIBRACAO: str = "calibration_data.json"
 """Cache local da matriz de calibração T_final (4×4).  Carregado
 automaticamente no início; recriado sempre que a tecla [C] é usada."""
+
+RANSAC_N_ITER: int = 1000
+"""Iterações do RANSAC na calibração da tampa.  O FOV do Kinect é mais
+largo que o caixão (captura moldura de madeira, piso e ruído da sala),
+então o plano dominante da tampa é isolado por amostragem robusta antes
+do refinamento por SVD."""
+
+RANSAC_LIMIAR_DIST: float = 0.03
+"""Distância máxima (3 cm) de um ponto ao plano candidato da tampa para
+ser considerado inlier durante o RANSAC de calibração."""
 
 CELULAS_GRADE_X: int = 30
 """Número de colunas da grade de discretização (eixo X).
@@ -137,7 +171,8 @@ CELULAS_GRADE_Y: int = 30
 Com a mesa de 1,5 m, 30 linhas geram quadrados de 5 cm × 5 cm."""
 
 RAIO_PA_VIRTUAL: float = 0.05
-"""Raio de ação da pá virtual (mouse) em metros (10 cm)."""
+"""Raio de ação da pá virtual (mouse) em metros (5 cm), tanto para
+cavar (botão esquerdo) quanto para preencher (botão direito)."""
 
 INTENSIDADE_PA_VIRTUAL: float = 0.008
 """Deslocamento de areia por evento de mouse no centro do pincel (8 mm)."""
@@ -195,12 +230,17 @@ class DadosCalibracao:
         Vetor de Rodrigues (rotação extrínseca → projetor).
     tvec : np.ndarray
         Translação extrínseca → projetor.
+    origem : str
+        Origem da calibração ativa, para exibição no HUD: ``"nenhuma"``,
+        ``"cache"`` (carregada de ``calibration_data.json``),
+        ``"manual (RANSAC)"`` ou ``"simulação"``.
     """
 
     def __init__(self) -> None:
         self.T: Optional[np.ndarray] = None
         self.normal: Optional[np.ndarray] = None
         self.centroide: Optional[np.ndarray] = None
+        self.origem: str = "nenhuma"
 
         # Parâmetros do projetor — defaults realistas (mock)
         # Serão sobrescritos quando a calibração real for feita
@@ -358,6 +398,7 @@ def _tentar_carregar_calibracao_cache() -> Optional[DadosCalibracao]:
 
     dados = DadosCalibracao()
     dados.T = T
+    dados.origem = "cache"
     dados.camera_matrix, dados.dist_coeffs, dados.rvec, dados.tvec = (
         _calcular_parametros_projecao(RESOLUCAO_PROJETOR)
     )
@@ -369,14 +410,19 @@ def _tentar_carregar_calibracao_cache() -> Optional[DadosCalibracao]:
 
 
 def _executar_calibracao(sensor: KinectSensor) -> DadosCalibracao:
-    """Calibração da Tampa ("Lid Calibration") — captura + SVD + Gram-Schmidt.
+    """Calibração da Tampa ("Lid Calibration") — captura + RANSAC + SVD + Gram-Schmidt.
 
     Executada **uma única vez** com uma tampa lisa e plana cobrindo toda
     a área do caixão, representando o plano de referência
-    ``Z_mesa = 0.0 m``.  Como a tampa ocupa 100% do campo de visão do
-    sensor, a nuvem capturada não contém outliers — o ajuste de plano
-    usa SVD puro (``pipeline_plano_e_base``, sem RANSAC), evitando a
-    variância extra de uma amostragem aleatória desnecessária.
+    ``Z_mesa = 0.0 m``.  O campo de visão do Kinect é **mais largo** que
+    o caixão de areia — a nuvem capturada inclui também a moldura de
+    madeira, o piso ao redor e ruído da sala.  Por isso o ajuste de
+    plano usa **RANSAC** (``pipeline_plano_e_base(..., usar_ransac=True)``)
+    para isolar o maior conjunto de pontos coplanares (a tampa) antes de
+    refinar a normal com SVD apenas sobre esses inliers, descartando
+    moldura/piso/ruído.  O RANSAC roda por ``RANSAC_N_ITER`` iterações
+    (padrão: 1000) com limiar de inlier ``RANSAC_LIMIAR_DIST`` (padrão:
+    0,03 m = 3 cm).
 
     Ao final, a matriz resultante (``T_final``) é persistida em
     ``calibration_data.json`` via ``salvar_matriz_calibracao`` — a
@@ -401,17 +447,19 @@ def _executar_calibracao(sensor: KinectSensor) -> DadosCalibracao:
     Raises
     ------
     RuntimeError
-        Se a nuvem de pontos for insuficiente (< 10 pontos).
+        Se a nuvem de pontos for insuficiente (< 10 pontos) ou se o
+        RANSAC não encontrar inliers suficientes para o plano da tampa.
     """
     dados = DadosCalibracao()
 
     print("\n" + "=" * 50)
-    print("  CALIBRAÇÃO DA TAMPA — SVD + Gram-Schmidt")
+    print("  CALIBRAÇÃO DA TAMPA — RANSAC + SVD + Gram-Schmidt")
     print("=" * 50)
 
     # ── Modo Simulação: pontos já em coordenadas da mesa ──
     if sensor.esta_simulando:
         dados.T = np.eye(4)
+        dados.origem = "simulação"
         dados.normal = np.array([0.0, 0.0, 1.0])
         # Z = 0.0 (nível da tampa) — não há sensor físico para capturar
         # a tampa real, então assume-se a mesa já calibrada na origem.
@@ -429,16 +477,21 @@ def _executar_calibracao(sensor: KinectSensor) -> DadosCalibracao:
         salvar_matriz_calibracao(dados.T, CAMINHO_CALIBRACAO)
         return dados
 
-    # ── Modo Real: captura da tampa plana → SVD → Gram-Schmidt ──
+    # ── Modo Real: captura (tampa + moldura + piso) → RANSAC → SVD → Gram-Schmidt ──
     pontos = sensor.capturar_nuvem()
     if pontos.shape[0] < 10:
         raise RuntimeError(
             "Nuvem com poucos pontos — verifique se a tampa está bem "
             "posicionada e visível ao sensor."
         )
-    print(f"  Pontos capturados (tampa): {pontos.shape[0]:,}")
+    print(f"  Pontos capturados (tampa + possíveis outliers): {pontos.shape[0]:,}")
 
-    normal, d, centroide, X, Y, Z, T = pipeline_plano_e_base(pontos)
+    normal, d, centroide, X, Y, Z, T = pipeline_plano_e_base(
+        pontos,
+        usar_ransac=True,
+        n_iter=RANSAC_N_ITER,
+        limiar_dist=RANSAC_LIMIAR_DIST,
+    )
 
     # T leva o centroide do plano da tampa para a origem (0, 0, 0) no
     # referencial da mesa (Z=0 já corresponde ao nível da tampa). Mas a
@@ -454,13 +507,16 @@ def _executar_calibracao(sensor: KinectSensor) -> DadosCalibracao:
     T_final = T_shift @ T
 
     dados.T = T_final
+    dados.origem = "manual (RANSAC)"
     dados.normal = normal
     dados.centroide = centroide
     dados.camera_matrix, dados.dist_coeffs, dados.rvec, dados.tvec = (
         _calcular_parametros_projecao(RESOLUCAO_PROJETOR)
     )
 
-    print(f"  Plano da tampa: {normal[0]:.4f}x + {normal[1]:.4f}y "
+    print(f"  RANSAC: {RANSAC_N_ITER} iterações, limiar de inlier "
+          f"{RANSAC_LIMIAR_DIST * 100:.0f} cm (moldura/piso/ruído descartados).")
+    print(f"  Plano da tampa (SVD sobre os inliers): {normal[0]:.4f}x + {normal[1]:.4f}y "
           f"+ {normal[2]:.4f}z + {d:.2f} = 0")
     print(f"  Centroide: ({centroide[0]:.3f}, {centroide[1]:.3f}, {centroide[2]:.3f})")
     print(f"  Mesa lógica: [0, {LARGURA_MESA:.2f}] × [0, {COMPRIMENTO_MESA:.2f}] m "
@@ -551,6 +607,143 @@ def _processar_frame_ar(
 
 
 # =====================================================================
+# HUD — Legenda On-Screen (cores + estado do sistema)
+# =====================================================================
+
+_HUD_VERMELHO: tuple[int, int, int] = (0, 0, 255)
+_HUD_AZUL:     tuple[int, int, int] = (255, 0, 0)
+_HUD_VERDE:    tuple[int, int, int] = (0, 255, 0)
+
+
+def _desenhar_legenda_hud(
+    imagem: np.ndarray,
+    linhas_estado: list[str],
+    tolerancia: float,
+) -> None:
+    """Desenha, em overlay semi-transparente, a legenda de cores e o
+    estado atual da máquina de estados no canto superior esquerdo do
+    frame — objetivo: tornar o sistema autoexplicativo para a banca
+    examinadora durante a apresentação, sem depender de documentação
+    externa para interpretar o feedback visual.
+
+    Usada **exclusivamente** sobre o heatmap da janela de controle
+    ``Gabarito_MDE``.  A janela ``Projecao_Areia`` (projetada fisicamente
+    sobre a areia) nunca recebe este overlay — deve permanecer
+    completamente limpa.
+
+    Regra de cores reproduzida na legenda (ver
+    ``motor_caixao_areia.cor_por_diferenca``):
+
+    - **Vermelho** (0, 0, 255) — ``Z_real > Z_alvo + tolerancia``
+      ("TOO HIGH / Cavar": há areia demais, é preciso escavar).
+    - **Azul** (255, 0, 0) — ``Z_real < Z_alvo - tolerancia``
+      ("TOO LOW / Preencher": falta areia, é preciso completar).
+    - **Verde** (0, 255, 0) — dentro da tolerância
+      ("OK": altura já corresponde ao alvo do MDE).
+
+    Parameters
+    ----------
+    imagem : np.ndarray, shape (H, W, 3), dtype uint8
+        Frame BGR anotado **in-place** (``cv2.rectangle``/``cv2.putText``
+        escrevem diretamente no array recebido; nenhuma cópia é
+        retornada).
+    linhas_estado : list[str]
+        Linhas de texto livres com o estado atual do sistema (ex.:
+        "Calibracao: Cache", "Pa Virtual Ativa (Simulacao)").
+    tolerancia : float
+        Tolerância de cor em metros, exibida na legenda.
+    """
+    altura_img, largura_img = imagem.shape[:2]
+
+    itens_cor = [
+        (_HUD_VERMELHO, "TOO HIGH (Cavar)"),
+        (_HUD_AZUL,     "TOO LOW (Preencher)"),
+        (_HUD_VERDE,    "OK (Alvo atingido)"),
+    ]
+
+    fonte = cv2.FONT_HERSHEY_SIMPLEX
+    escala = 0.5
+    espessura = 1
+    altura_linha = 22
+    largura_caixa = 260
+    n_linhas = 1 + len(itens_cor) + len(linhas_estado)
+    altura_caixa = 14 + altura_linha * n_linhas
+
+    x0, y0 = 8, 8
+    x1 = min(x0 + largura_caixa, largura_img - 1)
+    y1 = min(y0 + altura_caixa, altura_img - 1)
+    if x1 <= x0 or y1 <= y0:
+        return  # janela pequena demais para desenhar o HUD com segurança
+
+    # Painel semi-transparente (fundo escuro atrás do texto) via
+    # cv2.addWeighted, que combina overlay e imagem original pixel a
+    # pixel (alpha blending), preservando a visão da grade AR por trás.
+    overlay = imagem.copy()
+    cv2.rectangle(overlay, (x0, y0), (x1, y1), (30, 30, 30), -1)
+    cv2.addWeighted(overlay, 0.65, imagem, 0.35, 0, dst=imagem)
+    cv2.rectangle(imagem, (x0, y0), (x1, y1), (200, 200, 200), 1)
+
+    y = y0 + altura_linha
+    cv2.putText(imagem, f"Legenda (tolerancia +-{tolerancia * 100:.0f} cm)",
+                (x0 + 8, y), fonte, escala, (255, 255, 255), espessura, cv2.LINE_AA)
+
+    for cor, rotulo in itens_cor:
+        y += altura_linha
+        cv2.rectangle(imagem, (x0 + 8, y - 12), (x0 + 24, y + 2), cor, -1)
+        cv2.rectangle(imagem, (x0 + 8, y - 12), (x0 + 24, y + 2), (255, 255, 255), 1)
+        cv2.putText(imagem, rotulo, (x0 + 32, y), fonte, escala,
+                    (255, 255, 255), espessura, cv2.LINE_AA)
+
+    for linha in linhas_estado:
+        y += altura_linha
+        cv2.putText(imagem, linha, (x0 + 8, y), fonte, 0.45,
+                    (0, 255, 255), espessura, cv2.LINE_AA)
+
+
+def _linhas_estado_sistema(
+    estado_nome: str,
+    calibracao: Optional["DadosCalibracao"],
+    sensor: Optional[KinectSensor],
+    mde: Optional[AdaptadorMDE] = None,
+) -> list[str]:
+    """Monta as linhas de texto de estado exibidas no HUD (janela
+    ``Gabarito_MDE`` — nunca na janela de projeção, que fica limpa).
+
+    Parameters
+    ----------
+    estado_nome : str
+        Nome do estado atual da máquina de estados (``Estado.name``).
+    calibracao : DadosCalibracao | None
+        Calibração ativa, se houver.
+    sensor : KinectSensor | None
+        Sensor ativo, para checar o modo de simulação.
+    mde : AdaptadorMDE | None
+        Adaptador de MDE ativo, para exibir o mapa selecionado
+        (Cubo Central / Morro Gaussiano / GeoTIFF real).
+
+    Returns
+    -------
+    list[str]
+        Linhas prontas para ``_desenhar_legenda_hud``.
+    """
+    linhas = [f"Estado: {estado_nome}"]
+
+    if mde is not None:
+        sufixo = "  [M] alternar" if mde.usando_sintetico else ""
+        linhas.append(f"Mapa: {mde.nome_mapa_ativo}{sufixo}")
+
+    if calibracao is not None and calibracao.esta_calibrado:
+        linhas.append(f"Calibracao: {calibracao.origem} [C] recalibrar")
+    else:
+        linhas.append("Calibracao: pendente -- [C] para calibrar")
+
+    if sensor is not None and sensor.esta_simulando:
+        linhas.append("Pa Virtual Ativa: Esq=cavar / Dir=preencher")
+
+    return linhas
+
+
+# =====================================================================
 # GUI de Configuração Inicial (Tkinter)
 # =====================================================================
 
@@ -577,6 +770,7 @@ def _abrir_gui_configuracao() -> Optional[dict]:
     var_comprimento = tk.StringVar(value="1.50")
     var_altura = tk.StringVar(value="0.20")
     var_demo = tk.BooleanVar(value=False)
+    var_tipo_mapa = tk.StringVar(value=TIPO_MAPA_CUBO)
 
     # ── Título ──
     tk.Label(
@@ -637,16 +831,21 @@ def _abrir_gui_configuracao() -> Optional[dict]:
     btn_mapa.pack(fill="x")
     lbl_caminho.pack(fill="x", pady=(5, 5))
 
+    frame_tipo_mapa = tk.Frame(frame_mapa)
+
+    def _texto_demo() -> str:
+        nome = "Cubo Central" if var_tipo_mapa.get() == TIPO_MAPA_CUBO else "Morro Gaussiano"
+        return f"Modo demonstração — {nome} sintético ([M] alterna em tempo real)"
+
     def ao_alternar_demo():
         if var_demo.get():
             btn_mapa.config(state="disabled")
-            lbl_caminho.config(
-                text="Modo demonstração — Cubo Central sintético",
-                fg="#2e7d32",
-            )
+            lbl_caminho.config(text=_texto_demo(), fg="#2e7d32")
+            frame_tipo_mapa.pack(anchor="w", pady=(2, 0))
             btn_iniciar.config(state="normal")
         else:
             btn_mapa.config(state="normal")
+            frame_tipo_mapa.pack_forget()
             if var_caminho.get():
                 lbl_caminho.config(text=var_caminho.get(), fg="#1a1a1a")
                 btn_iniciar.config(state="normal")
@@ -661,6 +860,27 @@ def _abrir_gui_configuracao() -> Optional[dict]:
         text="Usar mapa de demonstração (sem arquivo .TIF)",
         variable=var_demo,
         command=ao_alternar_demo,
+        font=("Segoe UI", 9),
+    ).pack(anchor="w")
+
+    def ao_escolher_tipo_mapa():
+        if var_demo.get():
+            lbl_caminho.config(text=_texto_demo(), fg="#2e7d32")
+
+    tk.Radiobutton(
+        frame_tipo_mapa,
+        text="Cubo Central (platô quadrado)",
+        variable=var_tipo_mapa,
+        value=TIPO_MAPA_CUBO,
+        command=ao_escolher_tipo_mapa,
+        font=("Segoe UI", 9),
+    ).pack(anchor="w")
+    tk.Radiobutton(
+        frame_tipo_mapa,
+        text="Morro Gaussiano (monte suave)",
+        variable=var_tipo_mapa,
+        value=TIPO_MAPA_GAUSSIANA,
+        command=ao_escolher_tipo_mapa,
         font=("Segoe UI", 9),
     ).pack(anchor="w")
 
@@ -716,6 +936,7 @@ def _abrir_gui_configuracao() -> Optional[dict]:
         resultado["largura_mesa"] = largura
         resultado["comprimento_mesa"] = comprimento
         resultado["profundidade_caixa"] = altura
+        resultado["tipo_mapa"] = var_tipo_mapa.get()
         root.destroy()
 
     btn_iniciar = tk.Button(
@@ -767,6 +988,7 @@ def main() -> None:
     LARGURA_MESA = config["largura_mesa"]
     COMPRIMENTO_MESA = config["comprimento_mesa"]
     PROFUNDIDADE_CAIXA = config["profundidade_caixa"]
+    TIPO_MAPA_INICIAL = config.get("tipo_mapa", TIPO_MAPA_CUBO)
 
     print()
     print("╔══════════════════════════════════════════════════╗")
@@ -807,12 +1029,14 @@ def main() -> None:
                 print(f"[ERRO FATAL] Não foi possível iniciar o sensor: {e}")
                 sys.exit(1)
 
-            # MDE (com fallback para o mapa sintético "Cubo Central")
+            # MDE (com fallback para os mapas sintéticos "Cubo Central" /
+            # "Morro Gaussiano" — alternáveis em tempo real com [M])
             mde = AdaptadorMDE(
                 caminho_geotiff=CAMINHO_GEOTIFF,
                 largura_mesa=LARGURA_MESA,
                 comprimento_mesa=COMPRIMENTO_MESA,
                 profundidade_caixa=PROFUNDIDADE_CAIXA,
+                tipo_mapa=TIPO_MAPA_INICIAL,
             )
 
             # Gerar heatmap do MDE (exibido na janela Gabarito)
@@ -834,11 +1058,12 @@ def main() -> None:
 
             print()
             print("Janelas:")
-            print(f"  [{JANELA_PROJECAO}] Projeção AR (vermelho/azul/verde)")
-            print(f"  [{JANELA_GABARITO}] Heatmap de referência do MDE")
+            print(f"  [{JANELA_PROJECAO}] Projeção AR limpa (vermelho/azul/verde) — sem HUD")
+            print(f"  [{JANELA_GABARITO}] Heatmap do MDE + legenda de cores + HUD de estado")
             print()
             print("Teclas:")
-            print("  [C] Calibrar com a tampa plana (SVD + Gram-Schmidt)")
+            print("  [C] Calibrar com a tampa plana (RANSAC + SVD + Gram-Schmidt)")
+            print("  [M] Alternar mapa sintético (Cubo Central <-> Morro Gaussiano)")
             print("  [F] Tela cheia ON/OFF (janela de projeção)")
             print("  [Q] ou [ESC] Encerrar")
             if sensor.esta_simulando:
@@ -856,28 +1081,33 @@ def main() -> None:
 
         # ── IDLE ──────────────────────────────────────────
         elif estado == Estado.IDLE:
-            # Exibir profundidade colorida enquanto aguarda calibração
+            # Exibir profundidade colorida enquanto aguarda calibração —
+            # janela de projeção permanece limpa, sem HUD/legenda.
             profundidade = sensor.capturar_profundidade()
             imagem = KinectSensor.profundidade_para_imagem(profundidade)
-
-            # Overlay de instrução
-            cv2.putText(
-                imagem,
-                "Posicione a tampa plana e aperte [C] para calibrar",
-                (20, 40),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.7,
-                (255, 255, 255),
-                2,
-            )
             cv2.imshow(JANELA_PROJECAO, imagem)
-            cv2.imshow(JANELA_GABARITO, imagem_gabarito)
+
+            # HUD (legenda de cores + estado do sistema) na janela de
+            # controle Gabarito_MDE — nunca sobre a projeção física.
+            gabarito_display = imagem_gabarito.copy()
+            linhas_estado = _linhas_estado_sistema("IDLE", calibracao, sensor, mde)
+            linhas_estado.append("[C] Calibrar (tampa plana)  |  [Q] Sair")
+            _desenhar_legenda_hud(gabarito_display, linhas_estado, TOLERANCIA_COR)
+            cv2.imshow(JANELA_GABARITO, gabarito_display)
 
             tecla = cv2.waitKey(30) & 0xFF
             if tecla in (ord("c"), ord("C")):
                 estado = Estado.CALIBRACAO
             elif tecla in (ord("q"), ord("Q"), 27):  # 27 = ESC
                 estado = Estado.ENCERRAR
+            elif tecla in (ord("m"), ord("M")):
+                novo_tipo = mde.alternar_mapa_sintetico()
+                if novo_tipo is not None:
+                    imagem_gabarito = mde.gerar_imagem_visualizacao(
+                        largura=RESOLUCAO_PROJETOR[0],
+                        altura=RESOLUCAO_PROJETOR[1],
+                    )
+                    print(f"[Mapa] Alternado para: {mde.nome_mapa_ativo}")
 
         # ── CALIBRACAO ────────────────────────────────────
         elif estado == Estado.CALIBRACAO:
@@ -908,24 +1138,35 @@ def main() -> None:
             fps = 1.0 / max(agora - t_anterior, 1e-6)
             t_anterior = agora
 
-            # Overlay de FPS e status
-            cv2.putText(
-                imagem_ar,
-                f"FPS: {fps:.1f} | [C] Recalibrar | [Q] Sair",
-                (10, 25),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.5,
-                (200, 200, 200),
-                1,
-            )
+            # Janela de projeção: apenas a grade AR pura, sem overlay —
+            # é o que efetivamente é projetado sobre a areia física.
             cv2.imshow(JANELA_PROJECAO, imagem_ar)
-            cv2.imshow(JANELA_GABARITO, imagem_gabarito)
+
+            # HUD (legenda de cores + estado: mapa, calibração, pá
+            # virtual, FPS) exclusivamente na janela de controle
+            # Gabarito_MDE.
+            gabarito_display = imagem_gabarito.copy()
+            linhas_estado = _linhas_estado_sistema("AR_LOOP", calibracao, sensor, mde)
+            linhas_estado.append(f"FPS: {fps:.1f}")
+            linhas_estado.append(
+                "[C] Recalibrar  |  [F] Tela cheia  |  [Q] Sair"
+            )
+            _desenhar_legenda_hud(gabarito_display, linhas_estado, TOLERANCIA_COR)
+            cv2.imshow(JANELA_GABARITO, gabarito_display)
 
             tecla = cv2.waitKey(1) & 0xFF
             if tecla in (ord("c"), ord("C")):
                 estado = Estado.CALIBRACAO
             elif tecla in (ord("q"), ord("Q"), 27):
                 estado = Estado.ENCERRAR
+            elif tecla in (ord("m"), ord("M")):
+                novo_tipo = mde.alternar_mapa_sintetico()
+                if novo_tipo is not None:
+                    imagem_gabarito = mde.gerar_imagem_visualizacao(
+                        largura=RESOLUCAO_PROJETOR[0],
+                        altura=RESOLUCAO_PROJETOR[1],
+                    )
+                    print(f"[Mapa] Alternado para: {mde.nome_mapa_ativo}")
             elif tecla in (ord("f"), ord("F")):
                 # Toggle tela cheia (janela de projeção)
                 prop = cv2.getWindowProperty(

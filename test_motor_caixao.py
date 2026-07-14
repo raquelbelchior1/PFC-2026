@@ -26,6 +26,7 @@ import numpy as np
 
 from motor_caixao_areia import (
     ajustar_plano_svd,
+    ajustar_plano_ransac,
     gram_schmidt,
     construir_base_mesa,
     montar_matriz_transformacao,
@@ -129,6 +130,152 @@ class TestAjustePlano(unittest.TestCase):
         """Com menos de 3 pontos não é possível definir um plano."""
         with self.assertRaises(ValueError):
             ajustar_plano_svd(np.array([[0, 0, 0], [1, 0, 0]], dtype=float))
+
+
+# =====================================================================
+# 1b. TESTES — Ajuste de Plano Robusto (RANSAC)
+# =====================================================================
+
+class TestRANSAC(unittest.TestCase):
+    """
+    Testa ``ajustar_plano_ransac``: o campo de visão do Kinect é mais
+    largo que o caixão de areia (captura moldura de madeira, piso e
+    ruído da sala além da tampa), então a calibração oficial usa RANSAC
+    para isolar o plano dominante (a tampa) antes de refinar com SVD.
+    Limiar padrão: 0,03 m (3 cm).  Iterações padrão: 1000.
+    """
+
+    def test_poucos_pontos_levanta_valueerror(self):
+        """Com menos de 3 pontos não é possível definir um plano."""
+        with self.assertRaises(ValueError):
+            ajustar_plano_ransac(np.array([[0, 0, 0], [1, 0, 0]], dtype=float))
+
+    def test_sem_plano_dominante_levanta_runtimeerror(self):
+        """
+        Nuvem totalmente dispersa em 3D (sem outliers a rejeitar, sem
+        plano dominante nenhum) com limiar minúsculo e exigência alta
+        de inliers deve levantar ``RuntimeError`` -- nenhum plano
+        candidato reúne pontos suficientes.
+        """
+        rng = np.random.default_rng(123)
+        pontos = rng.uniform(0.0, 1.0, size=(50, 3))
+        with self.assertRaises(RuntimeError):
+            ajustar_plano_ransac(
+                pontos, n_iter=200, limiar_dist=1e-6,
+                min_inliers_ratio=0.9, semente_rng=123,
+            )
+
+    def test_limiar_003_inclui_ate_3cm_exclui_acima(self):
+        """
+        20 pontos exatamente no plano z=0 (a "tampa"), mais um ponto a
+        2,5 cm do plano (dentro do limiar padrão de 3 cm -> inlier) e
+        outro a 3,5 cm (fora do limiar -> outlier).
+
+        Com limiar_dist=0.03: inliers = 20 pontos em z=0 + o ponto a
+        2,5 cm (21 no total) -> centroide_z = 0,025 / 21.
+        Com limiar_dist=0.02 (mais rígido): o ponto a 2,5 cm também é
+        excluído -> centroide_z = 0,0 exatamente.
+
+        Este par de execuções comprova, de forma determinística, que o
+        limiar de distância do RANSAC é respeitado na fronteira exata
+        pedida pela especificação (3 cm).
+        """
+        xs = np.linspace(0.0, 1.0, 5)
+        ys = np.linspace(0.0, 1.0, 4)
+        xx, yy = np.meshgrid(xs, ys)
+        pontos_plano = np.column_stack([xx.ravel(), yy.ravel(), np.zeros(xx.size)])
+
+        ponto_dentro_limiar = np.array([[0.5, 0.5, 0.025]])   # 2,5 cm — inlier a 3 cm
+        ponto_fora_limiar   = np.array([[0.5, 0.4, 0.035]])   # 3,5 cm — outlier a 3 cm
+
+        pontos = np.vstack([pontos_plano, ponto_dentro_limiar, ponto_fora_limiar])
+
+        _, _, centroide_03 = ajustar_plano_ransac(
+            pontos, n_iter=1000, limiar_dist=0.03, semente_rng=42,
+        )
+        _, _, centroide_02 = ajustar_plano_ransac(
+            pontos, n_iter=1000, limiar_dist=0.02, semente_rng=42,
+        )
+
+        n_plano = pontos_plano.shape[0]
+        esperado_com_03 = 0.025 / (n_plano + 1)
+        self.assertAlmostEqual(
+            centroide_03[2], esperado_com_03, places=6,
+            msg="Com limiar 3 cm, o ponto a 2,5 cm deveria ser incluído como inlier",
+        )
+        self.assertAlmostEqual(
+            centroide_02[2], 0.0, places=6,
+            msg="Com limiar 2 cm, o ponto a 2,5 cm deveria ser excluído como outlier",
+        )
+
+    def test_rejeita_outliers_moldura_e_piso(self):
+        """
+        Cenário motivador da especificação: o Kinect enxerga uma área
+        MAIOR que o caixão, incluindo moldura de madeira e piso ao
+        redor.  A nuvem contém a tampa plana (maioria dos pontos) mais
+        uma fração de outliers dispersos e não coplanares (moldura +
+        piso).  RANSAC deve recuperar a normal vertical da tampa com
+        alta precisão, enquanto o SVD puro (sem filtrar outliers) se
+        desvia sensivelmente da vertical -- prova de que o RANSAC é
+        necessário neste cenário mais realista.
+        """
+        h_tampa, w_tampa = 40, 40
+        prof_tampa = np.full((h_tampa, w_tampa), 2500.0, dtype=np.uint16)
+        nuvem_tampa = profundidade_para_nuvem_mesa(
+            prof_tampa, fx=500.0, fy=500.0, cx=20.0, cy=20.0,
+        )  # plano exato em Z_mesa = -2.5
+
+        rng = np.random.default_rng(7)
+        n_outliers = nuvem_tampa.shape[0] // 4  # ~20% da nuvem total
+        outliers = np.column_stack([
+            rng.uniform(-2.0, 2.0, n_outliers),
+            rng.uniform(-2.0, 2.0, n_outliers),
+            rng.uniform(-1.8, -0.5, n_outliers),  # profundidades bem diferentes da tampa
+        ])
+
+        pontos = np.vstack([nuvem_tampa, outliers])
+
+        normal_svd, _, _ = ajustar_plano_svd(pontos)
+        normal_ransac, _, centroide_ransac = ajustar_plano_ransac(
+            pontos, n_iter=1000, limiar_dist=0.03, semente_rng=7,
+        )
+
+        self.assertTrue(
+            arrays_proximos(np.abs(normal_ransac), [0, 0, 1], tol=1e-3),
+            f"RANSAC deveria recuperar a normal vertical da tampa, obteve {normal_ransac}",
+        )
+        self.assertAlmostEqual(centroide_ransac[2], -2.5, places=2)
+
+        desvio_svd = abs(abs(normal_svd[2]) - 1.0)
+        desvio_ransac = abs(abs(normal_ransac[2]) - 1.0)
+        self.assertGreater(
+            desvio_svd, desvio_ransac,
+            "RANSAC deveria produzir uma normal mais próxima da vertical "
+            "que o SVD puro aplicado à nuvem inteira (com outliers)",
+        )
+
+    def test_refinamento_svd_usa_apenas_inliers(self):
+        """
+        O resultado do RANSAC deve coincidir com o SVD aplicado
+        manualmente apenas sobre os pontos verdadeiramente inliers
+        (dado que, com pontos exatamente coplanares, o RANSAC sempre
+        converge para o próprio plano de dados)."""
+        xs = np.linspace(0.0, 1.0, 6)
+        ys = np.linspace(0.0, 1.0, 6)
+        xx, yy = np.meshgrid(xs, ys)
+        pontos_plano = np.column_stack([xx.ravel(), yy.ravel(), np.zeros(xx.size)])
+
+        outlier = np.array([[0.5, 0.5, 5.0]])  # muito distante — outlier óbvio
+        pontos = np.vstack([pontos_plano, outlier])
+
+        normal_ransac, d_ransac, centroide_ransac = ajustar_plano_ransac(
+            pontos, n_iter=500, limiar_dist=0.03, semente_rng=1,
+        )
+        normal_svd_manual, d_svd_manual, centroide_svd_manual = ajustar_plano_svd(pontos_plano)
+
+        self.assertTrue(arrays_proximos(normal_ransac, normal_svd_manual, tol=1e-6))
+        self.assertAlmostEqual(d_ransac, d_svd_manual, places=6)
+        self.assertTrue(arrays_proximos(centroide_ransac, centroide_svd_manual, tol=1e-6))
 
 
 # =====================================================================
@@ -616,6 +763,53 @@ class TestCalibracaoTampa(unittest.TestCase):
         pontos = self._capturar_tampa()
         normal, d, centroide, X, Y, Z, T = pipeline_plano_e_base(pontos, usar_ransac=True)
         self.assertTrue(arrays_proximos(np.abs(normal), [0, 0, 1]))
+
+    def test_calibracao_ransac_com_moldura_e_piso_mapeia_tampa_para_z_zero(self):
+        """
+        Fluxo completo da calibração oficial (replicando
+        ``main._executar_calibracao``) com a nuvem contaminada por
+        outliers de moldura de madeira e piso — exatamente o cenário
+        descrito na especificação, já que o FOV do Kinect é mais largo
+        que o caixão.  RANSAC (limiar 3 cm, 1000 iterações) → SVD →
+        Gram-Schmidt → T_shift → T_final.  Os pontos da TAMPA (não os
+        outliers) devem mapear para Z_mesa ≈ 0 — a própria definição do
+        plano de referência da calibração — comprovando que a
+        contaminação da nuvem não compromete o resultado.
+        """
+        h_tampa, w_tampa = 30, 30
+        prof_tampa = np.full((h_tampa, w_tampa), 2500.0, dtype=np.uint16)
+        nuvem_tampa = profundidade_para_nuvem_mesa(
+            prof_tampa, fx=500.0, fy=500.0, cx=15.0, cy=15.0,
+        )
+
+        rng = np.random.default_rng(3)
+        n_outliers = nuvem_tampa.shape[0] // 3
+        outliers = np.column_stack([
+            rng.uniform(-2.0, 2.0, n_outliers),
+            rng.uniform(-2.0, 2.0, n_outliers),
+            rng.uniform(-1.5, -0.3, n_outliers),
+        ])
+        pontos_contaminados = np.vstack([nuvem_tampa, outliers])
+
+        normal, d, centroide, X, Y, Z, T = pipeline_plano_e_base(
+            pontos_contaminados,
+            usar_ransac=True,
+            n_iter=1000,
+            limiar_dist=0.03,
+            semente_rng=3,
+        )
+
+        T_shift = np.eye(4)
+        T_shift[0, 3] = self.LARGURA_MESA / 2.0
+        T_shift[1, 3] = self.COMPRIMENTO_MESA / 2.0
+        T_final = T_shift @ T
+
+        transformados = transformar_pontos(T_final, nuvem_tampa)
+        self.assertTrue(
+            np.allclose(transformados[:, 2], 0.0, atol=1e-2),
+            "Pontos da tampa deveriam mapear para Z_mesa ~ 0 mesmo com "
+            "outliers de moldura/piso contaminando a nuvem de calibração",
+        )
 
 
 # =====================================================================

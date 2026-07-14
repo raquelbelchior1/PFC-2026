@@ -66,6 +66,7 @@ if hasattr(_os, 'add_dll_directory'):
 # ────────────────────────────────────────────────────────────────
 
 import logging
+import sys
 import time
 from enum import Enum, auto
 from typing import Optional, Tuple
@@ -74,6 +75,15 @@ import cv2
 import numpy as np
 
 from motor_caixao_areia import profundidade_para_nuvem_mesa
+
+# Evita UnicodeEncodeError em consoles Windows cp1252 ao imprimir
+# símbolos (✓, ⚠, ×) usados nas mensagens de status do sensor.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
 
 logger = logging.getLogger(__name__)
 

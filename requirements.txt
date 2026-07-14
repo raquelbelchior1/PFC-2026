@@ -1,23 +1,30 @@
 # Dependências do AR Sandbox — PFC-2026
 # Instalar com:  pip install -r requirements.txt
+#
+# Pisos mínimos (>=) em vez de fixações exatas (==) onde a versão
+# exata não é estritamente necessária — evita falhas de instalação no
+# Windows quando não existe wheel pré-compilada para uma versão exata
+# em combinação com a versão do Python instalada (o pip tentaria
+# compilar do zero, o que falha sem VC++ Build Tools / cabeçalhos
+# GDAL).  As duas exceções fixadas abaixo (numpy, comtypes) exigem
+# compatibilidade binária exata com os patches do pykinect2.
 
 # Visão computacional e álgebra linear (obrigatório)
+# numpy fixado em 1.26.4: numpy 2.x quebra os patches de compatibilidade
+# do pykinect2 (numpy.distutils, dtype=object) — ver DOCUMENTACAO_OFICIAL.md.
 numpy==1.26.4
-opencv-python==4.11.0.86
+opencv-python>=4.8,<5
 
 # Sensor Kinect v2 via SDK Microsoft (obrigatório no modo real)
 pykinect2==0.1.0
+# comtypes fixado em 1.3.1: versões mais novas alteram sizeof(tagSTATSTG),
+# quebrando o driver do Kinect v2 — ver DOCUMENTACAO_OFICIAL.md.
 comtypes==1.3.1
 
-# Leitura de GeoTIFF / MDE (opcional — sem isto usa Morro Gaussiano)
-rasterio==1.3.10
-affine==2.4.0
-attrs==26.1.0
-certifi==2026.4.22
-click==8.3.3
-cligj==0.7.2
-colorama==0.4.6
-pyparsing==3.3.2
+# Leitura de GeoTIFF / MDE e interpolação (opcional — sem isto o
+# sistema cai automaticamente no mapa sintético "Cubo Central")
+rasterio>=1.3
+scipy>=1.11
 
 # Testes unitários (opcional)
-pytest==9.0.3
+pytest>=7.0

@@ -47,8 +47,10 @@ Na ausência de hardware físico, o sistema oferece um **emulador interativo** q
 | Células da grade (eixo X) | 30 | `CELULAS_GRADE_X` |
 | Células da grade (eixo Y) | 30 | `CELULAS_GRADE_Y` |
 | Tamanho de cada célula | 5 cm × 5 cm | derivado |
-| Raio da pá virtual (mouse) | 0,10 m (10 cm) | `RAIO_PA_VIRTUAL` |
+| Raio da pá virtual (mouse) | 0,05 m (5 cm) | `RAIO_PA_VIRTUAL` |
 | Intensidade da pá virtual | 0,008 m (8 mm/evento) | `INTENSIDADE_PA_VIRTUAL` |
+| Iterações do RANSAC (calibração) | 1000 | `RANSAC_N_ITER` |
+| Limiar de inlier do RANSAC | 0,03 m (3 cm) | `RANSAC_LIMIAR_DIST` |
 
 ### 1.1.1 Convenção de Coordenadas Z — Calibração da Tampa
 
@@ -63,7 +65,7 @@ $$Z_{mesa} \in \left[-\text{PROFUNDIDADE\_CAIXA},\; 0{,}0\right] = [-0{,}20 \tex
 - $Z_{mesa} = 0{,}0$ m → nível da tampa (areia até a borda do caixão)
 - $Z_{mesa} = -0{,}20$ m → fundo físico do caixão (sem areia)
 
-Essa calibração é feita **uma única vez** (não continuamente, como em versões anteriores do sistema) justamente porque a tampa lisa cobre 100 % do campo de visão do sensor — não há paredes, bordas ou areia irregular na cena, eliminando a necessidade de filtragem de outliers (RANSAC) e o risco de degeneração numérica do SVD por dados ruidosos ou heterogêneos. Todos os cálculos de profundidade, mapeamento de coordenadas e classificação de cores do restante deste documento respeitam rigorosamente essa faixa negativa.
+Essa calibração é feita **uma única vez** (não continuamente, como em versões anteriores do sistema). O campo de visão do Kinect, no entanto, é **maior** que a área útil do caixão: a nuvem capturada durante a calibração inclui também a **moldura de madeira** do caixão, o **piso** ao redor e ruído da sala — pontos que não pertencem ao plano da tampa. Por isso o ajuste de plano usa **RANSAC** (*Random Sample Consensus*) antes do SVD: o RANSAC roda por até **1000 iterações**, testando planos candidatos formados por trincas de pontos amostradas aleatoriamente e contando quantos pontos da nuvem caem a menos de **0,03 m (3 cm)** de cada plano candidato (o **limiar de inlier**). O plano com mais inliers — o da tampa, por ser o maior conjunto coplanar da cena — é escolhido, e **somente esses inliers** alimentam o refinamento por SVD, que calcula a normal final. Moldura, piso e ruído — todos a mais de 3 cm do plano da tampa — são descartados antes do ajuste de mínimos quadráticos, evitando que distorçam a normal calculada. Todos os cálculos de profundidade, mapeamento de coordenadas e classificação de cores do restante deste documento respeitam rigorosamente essa faixa negativa.
 
 ### 1.2 Saídas Visuais
 
@@ -73,6 +75,30 @@ O sistema opera com **duas janelas OpenCV simultâneas**, projetadas para a apre
 |---|---|---|
 | **Projeção AR** | `Projecao_Areia` | Grade contínua de quadrados coloridos (vermelho/azul/verde) — enviada ao projetor sobre a areia. Suporta tela cheia (`cv2.WINDOW_FULLSCREEN`). Aceita interação via mouse (modo simulação). |
 | **Gabarito MDE** | `Gabarito_MDE` | Heatmap 2D do MDE de referência com colormap — monitor auxiliar para o operador e a banca. |
+
+### 1.3 Legenda On-Screen (HUD)
+
+Para que o sistema seja autoexplicativo durante a apresentação — sem depender desta documentação —, a janela **Projeção AR** exibe, a cada frame, um **HUD** (*Heads-Up Display*) desenhado no canto superior esquerdo: um painel semi-transparente (`cv2.addWeighted`, *alpha blending* entre um retângulo escuro e a imagem original) sobreposto à grade AR, implementado em `main._desenhar_legenda_hud`.
+
+O HUD reproduz a regra de coloração (Seção 7) como legenda visual:
+
+| Amostra | Cor (BGR) | Rótulo no HUD | Condição |
+|---|---|---|---|
+| 🔴 | `(0, 0, 255)` | `TOO HIGH (Cavar)` | $Z_{real} > Z_{alvo} + 0{,}02$ m |
+| 🔵 | `(255, 0, 0)` | `TOO LOW (Preencher)` | $Z_{real} < Z_{alvo} - 0{,}02$ m |
+| 🟢 | `(0, 255, 0)` | `OK (Alvo atingido)` | $|Z_{real} - Z_{alvo}| \leq 0{,}02$ m |
+
+Abaixo da legenda de cores, o HUD exibe o **estado atual do sistema** (`main._linhas_estado_sistema`), montado dinamicamente conforme a máquina de estados e a origem da calibração ativa (`DadosCalibracao.origem`):
+
+- `Estado: <IDLE|CALIBRACAO|AR_LOOP>` — estado corrente da máquina de estados.
+- `Calibracao: pendente -- [C] para calibrar` — nenhuma calibração carregada ainda.
+- `Calibracao: cache [C] recalibrar` — `T_final` carregado automaticamente de `calibration_data.json`.
+- `Calibracao: manual (RANSAC) [C] recalibrar` — calibração recém-concluída nesta execução (modo real, via RANSAC + SVD).
+- `Calibracao: simulação [C] recalibrar` — modo simulação (sem sensor físico).
+- `Pa Virtual Ativa: Esq=cavar / Dir=preencher` — exibida apenas quando `sensor.esta_simulando`.
+- `FPS: <valor>` — taxa de quadros corrente (apenas no estado `AR_LOOP`).
+
+Dicas de teclado (`[C] Recalibrar`, `[F] Tela cheia`, `[Q] Sair`) são desenhadas separadamente, na parte inferior do frame, para não competir visualmente com o HUD.
 
 ---
 
@@ -94,7 +120,7 @@ PFC-2026/
 ├── kinect_sensor.py           # Camada de Hardware — KinectSensor (OOP + Grade Persistente)
 ├── motor_caixao_areia.py      # Motor Matemático — álgebra linear + discretização em grade
 ├── mde_cartografia.py         # Adaptador de Dados — AdaptadorMDE (GeoTIFF)
-├── test_motor_caixao.py       # Suíte TDD — 53 testes unitários
+├── test_motor_caixao.py       # Suíte TDD — 59 testes unitários
 ├── DOCUMENTACAO_OFICIAL.md    # Este documento
 └── README.md                  # Guia de uso prático
 ```
@@ -181,7 +207,7 @@ O orquestrador implementa uma máquina de estados finita com quatro estados e tr
 | Visão Computacional | OpenCV 4.x | `projectPoints`, `fillPoly`, `setMouseCallback`, colormap, janelas |
 | Nuvem 3D (opcional) | Open3D | Criação de `PointCloud` a partir de RGB-D |
 | GeoTIFF (opcional) | rasterio + scipy | Leitura de MDE real + interpolação bilinear |
-| Testes | unittest / pytest | Suíte TDD com 53 testes automatizados |
+| Testes | unittest / pytest | Suíte TDD com 59 testes automatizados |
 
 ---
 
@@ -189,17 +215,28 @@ O orquestrador implementa uma máquina de estados finita com quatro estados e tr
 
 O módulo `motor_caixao_areia.py` implementa os pilares matemáticos que convertem uma nuvem de pontos bruta do Kinect em uma grade contínua de quadrados coloridos projetados sobre a areia. Cada passo é descrito com rigor formal.
 
-### 3.1 Passo 1 — Ajuste de Plano via Decomposição em Valores Singulares (SVD)
+### 3.1 Passo 1 — Ajuste de Plano Robusto: RANSAC + SVD
 
-**Objetivo:** Dada uma nuvem de $N$ pontos $\{\mathbf{p}_i\}_{i=1}^{N} \subset \mathbb{R}^3$ capturados pelo Kinect sobre a **tampa plana de calibração**, encontrar o plano que melhor se ajusta a esses pontos no sentido dos mínimos quadráticos.
+**Objetivo:** Dada uma nuvem de $N$ pontos $\{\mathbf{p}_i\}_{i=1}^{N} \subset \mathbb{R}^3$ capturados pelo Kinect durante a calibração da **tampa plana**, encontrar o plano que melhor se ajusta **apenas** aos pontos da tampa, descartando qualquer ponto que não pertença a ela.
 
-**Por que SVD puro, sem RANSAC.** A tampa lisa cobre 100 % do campo de visão do sensor durante a calibração — não há paredes, bordas do caixão, nem areia irregular na cena, logo não há outliers a filtrar. Nessas condições, o ajuste de mínimos quadráticos via SVD já é a estimativa ótima (máxima verossimilhança sob ruído Gaussiano) e numericamente estável; aplicar RANSAC introduziria apenas a variância de uma amostragem aleatória, sem nenhum benefício. `pipeline_plano_e_base()` aceita um parâmetro opcional `usar_ransac=True` para cenários com outliers, mas o fluxo oficial de calibração (`main.py._executar_calibracao`) usa o padrão SVD puro.
+**Por que RANSAC é necessário.** O campo de visão (FOV) do Kinect é **maior** que a área útil do caixão de areia: ao capturar a tampa, a nuvem inclui também a **moldura de madeira** do caixão, o **piso** ao redor e ruído da sala — pontos que não são coplanares com a tampa. Um SVD aplicado ingenuamente sobre a nuvem inteira minimiza a soma dos quadrados das distâncias **de todos os pontos**, inclusive desses outliers, o que distorce a normal calculada (o plano encontrado deixa de coincidir exatamente com o plano físico da tampa). A solução é o **RANSAC** (*Random Sample Consensus*): um algoritmo de amostragem robusta que isola o maior subconjunto de pontos coplanares (os *inliers* — presumivelmente a tampa, por ser o maior objeto plano da cena) antes de aplicar o SVD **somente** sobre eles.
 
-**Formulação.** O plano é descrito pela equação:
+**Etapa 1a — RANSAC (`ajustar_plano_ransac()`).** Para `n_iter` iterações (padrão: **1000**):
+
+1. **Amostragem.** Sorteiam-se 3 pontos distintos $\mathbf{p}_0, \mathbf{p}_1, \mathbf{p}_2$ da nuvem — com viés Gaussiano para o centro XY (o Kinect está centralizado sobre o caixão, logo a região central da nuvem é estatisticamente mais confiável que as bordas).
+2. **Plano candidato.** Calcula-se a normal candidata pelo produto vetorial $\mathbf{n}_c = (\mathbf{p}_1 - \mathbf{p}_0) \times (\mathbf{p}_2 - \mathbf{p}_0)$, normalizada, e o coeficiente $d_c = -\mathbf{n}_c \cdot \mathbf{p}_0$.
+3. **Contagem de inliers.** Para cada ponto $\mathbf{p}_i$ da nuvem, calcula-se a distância ao plano candidato $\delta_i = |\mathbf{n}_c \cdot \mathbf{p}_i + d_c|$ (vetorizado via NumPy). Um ponto é **inlier** se $\delta_i <$ `limiar_dist` (padrão: **0,03 m = 3 cm**) — distância suficiente para tolerar o ruído do sensor (~1–3 mm) e irregularidades da própria tampa, mas pequena o bastante para rejeitar moldura, piso e ruído de sala, que tipicamente estão a dezenas de centímetros de distância do plano da tampa.
+4. **Atualização do melhor plano.** Mantém-se o plano candidato com o **maior número de inliers** observado em todas as iterações.
+
+Ao final, se o melhor conjunto de inliers for menor que `min_inliers_ratio` (padrão: 30 %) da nuvem total, levanta-se `RuntimeError` — sinal de que nenhum plano dominante foi encontrado (ex.: sensor mal posicionado).
+
+**Etapa 1b — Refinamento por SVD.** O plano candidato do RANSAC (obtido de apenas 3 pontos) é impreciso; por isso, o conjunto de inliers vencedor é passado para `ajustar_plano_svd()` (mesmo algoritmo descrito abaixo), que recalcula a normal usando **todos** os inliers — não apenas 3 pontos — via mínimos quadráticos. Esse refinamento é o que garante precisão sub-milimétrica na normal final, mesmo com uma nuvem originalmente contaminada por outliers.
+
+**Formulação do SVD.** O plano é descrito pela equação:
 
 $$ax + by + cz + d = 0$$
 
-onde $\mathbf{n} = (a, b, c)^T$ é o vetor normal unitário e $d = -\mathbf{n} \cdot \bar{\mathbf{p}}$, com $\bar{\mathbf{p}}$ sendo o centroide da nuvem.
+onde $\mathbf{n} = (a, b, c)^T$ é o vetor normal unitário e $d = -\mathbf{n} \cdot \bar{\mathbf{p}}$, com $\bar{\mathbf{p}}$ sendo o centroide dos pontos (dos inliers, quando refinando após o RANSAC).
 
 **Método.** O algoritmo procede em três etapas:
 
@@ -213,7 +250,7 @@ $$M = \begin{bmatrix} (\mathbf{p}_1 - \bar{\mathbf{p}})^T \\ \vdots \\ (\mathbf{
 
 **Convenção:** o código garante $n_z > 0$ (normal apontando para cima, em direção ao Kinect).
 
-**Implementação:** `ajustar_plano_svd()` em `motor_caixao_areia.py`.
+**Implementação:** `ajustar_plano_ransac()` (RANSAC) e `ajustar_plano_svd()` (refinamento) em `motor_caixao_areia.py`; `pipeline_plano_e_base(..., usar_ransac=True, n_iter=1000, limiar_dist=0.03)` encadeia as duas etapas e é o modo usado pelo fluxo oficial de calibração (`main.py._executar_calibracao`). `usar_ransac=False` (SVD puro sobre a nuvem inteira, sem filtragem) permanece disponível para cenas já garantidamente livres de outliers, como nuvens sintéticas de teste.
 
 ---
 
@@ -450,8 +487,8 @@ onde:
 | Símbolo | Significado | Valor padrão |
 |---|---|---|
 | $\alpha$ | Intensidade do deslocamento por evento (metros) | $0{,}008$ m (8 mm) |
-| $\sigma$ | Desvio padrão do perfil Gaussiano | $r / 2 = 0{,}05$ m |
-| $r$ | Raio de ação da pá virtual | $0{,}10$ m (10 cm) |
+| $\sigma$ | Desvio padrão do perfil Gaussiano | $r / 2 = 0{,}025$ m |
+| $r$ | Raio de ação da pá virtual (cavar e preencher) | $0{,}05$ m (5 cm) |
 | $+$ | Operador ao preencher (botão direito), rumo à tampa | — |
 | $-$ | Operador ao cavar (botão esquerdo), rumo ao fundo | — |
 | $\text{clip}(v, a, b)$ | $\max(a, \min(v, b))$ | $[-0{,}20,\, 0{,}00]$ m |
@@ -581,11 +618,11 @@ $$\text{cor}(i,j) = \begin{cases} \color{red}{\textbf{Vermelho}} \; (0, 0, 255)_
 
 ### 8.1 Estratégia de Testes
 
-A estabilidade do motor matemático foi assegurada com **Test-Driven Development (TDD)**, resultando em **53 testes unitários** no módulo `test_motor_caixao.py`:
+A estabilidade do motor matemático foi assegurada com **Test-Driven Development (TDD)**, resultando em **59 testes unitários** no módulo `test_motor_caixao.py`:
 
 ```bash
 python -m unittest test_motor_caixao -v
-# Resultado: 52 passed, 1 skipped (Open3D não instalado)
+# Resultado: 58 passed, 1 skipped (Open3D não instalado)
 ```
 
 ### 8.2 Cobertura por Componente
@@ -593,6 +630,7 @@ python -m unittest test_motor_caixao -v
 | Classe de Teste | Qtd | Componente Verificado |
 |---|---|---|
 | `TestAjustePlano` | 4 | SVD: normal unitária, plano horizontal $z=5$, plano inclinado, exceção $N<3$ |
+| `TestRANSAC` | 5 | Rejeição de outliers de moldura/piso (normal recuperada com maior precisão que o SVD puro), limiar de 3 cm testado na fronteira exata (2,5 cm inlier vs. 3,5 cm outlier), `ValueError` para $N<3$, `RuntimeError` sem plano dominante, refinamento SVD idêntico ao aplicado manualmente sobre os inliers |
 | `TestGramSchmidt` | 2 | Ortogonalidade, exceção para vetores paralelos |
 | `TestConstruirBase` | 3 | Ortonormalidade mútua, $Z_{\text{mesa}} = \mathbf{n}$, planos inclinados |
 | `TestMatrizTransformacao` | 3 | $T = I$ para base canônica, translação anula origem, $z_{\text{mesa}} = 0$ no plano |
@@ -600,7 +638,7 @@ python -m unittest test_motor_caixao -v
 | `TestProjecaoTsai` | 3 | Projeção no ponto principal, deslocamento em $x$, múltiplos pontos |
 | `TestLeituraRGBD` | 1 | Importação condicional do Open3D (skip gracioso se ausente) |
 | `TestBackProjectionMesa` | 4 | Convenção de sinal Z na back-projection pinhole, filtro de alcance do sensor |
-| `TestCalibracaoTampa` | 5 | SVD na tampa ($Z=0$), $T_{\text{shift}}$ centraliza em $L/2$, areia mapeia para $Z$ negativo |
+| `TestCalibracaoTampa` | 6 | SVD na tampa ($Z=0$), $T_{\text{shift}}$ centraliza em $L/2$, areia mapeia para $Z$ negativo, calibração via RANSAC com nuvem contaminada por moldura/piso mapeando a tampa para $Z\approx0$ |
 | `TestPipeline` | 2 | Integração completa (genérica): plano $z=0$ e ponto acima do plano $z=10$ |
 | `TestPersistenciaCalibracao` | 4 | Round-trip do cache JSON, arquivo ausente, JSON corrompido, shape inválida |
 | `TestCuboCentral` | 7 | Platô $-0{,}10$ m, fundo $-0{,}20$ m, bordas inclusivas, versão vetorizada, integração com `AdaptadorMDE` |
@@ -661,7 +699,7 @@ O sistema detecta automaticamente o hardware disponível. Se nenhum Kinect estiv
 
 | Tecla | Ação |
 |---|---|
-| **C** | Calibrar com a tampa plana (SVD + Gram-Schmidt + Matriz 4×4) — salva `calibration_data.json` |
+| **C** | Calibrar com a tampa plana (RANSAC + SVD + Gram-Schmidt + Matriz 4×4) — salva `calibration_data.json` |
 | **F** | Toggle tela cheia na janela Projecao_Areia |
 | **Q** / **ESC** | Encerrar |
 
@@ -677,7 +715,7 @@ O sistema detecta automaticamente o hardware disponível. Se nenhum Kinect estiv
 | Passo | Ação | Resultado esperado |
 |---|---|---|
 | 1 | `python main.py` | Duas janelas abrem: **Projecao_Areia** e **Gabarito_MDE** |
-| 2 | (1ª execução) Pressionar **C**; (execuções seguintes) automático | Calibração da tampa via SVD, $T_{final}$ salvo em `calibration_data.json`; nas execuções seguintes, o cache é carregado e o sistema pula direto para o AR_LOOP |
+| 2 | (1ª execução) Pressionar **C**; (execuções seguintes) automático | Calibração da tampa via RANSAC (isola o plano, descarta moldura/piso) + SVD, $T_{final}$ salvo em `calibration_data.json`; nas execuções seguintes, o cache é carregado e o sistema pula direto para o AR_LOOP |
 | 3 | Observar **Projecao_Areia** | Grade contínua de quadrados: platô central verde, restante da mesa vermelho (antes de ajustar a areia) |
 | 4 | Observar **Gabarito_MDE** | Heatmap do Cubo Central de referência (platô 50×50 cm a $-0{,}10$ m) |
 | 5 | **Arrastar botão esquerdo** fora do platô (vermelho) | Quadrados mudam de vermelho → verde (areia descendo ao fundo, $-0{,}20$ m) |
@@ -693,10 +731,10 @@ O sistema detecta automaticamente o hardware disponível. Se nenhum Kinect estiv
 python -m unittest test_motor_caixao -v
 ```
 
-Saída esperada: **52 passed, 1 skipped** (Open3D ausente no ambiente de teste).
+Saída esperada: **58 passed, 1 skipped** (Open3D ausente no ambiente de teste).
 
 ---
 
 > **Documento gerado em:** Julho de 2026
-> **Versão:** 4.0 — Calibração da Tampa (SVD único + cache JSON), convenção $Z_{mesa} \in [-0{,}20, 0{,}0]$ m, mapa sintético Cubo Central
+> **Versão:** 5.0 — Calibração da Tampa robusta a outliers (RANSAC + SVD, limiar 3 cm, 1000 iterações), legenda visual on-screen (HUD), cache JSON, convenção $Z_{mesa} \in [-0{,}20, 0{,}0]$ m, mapa sintético Cubo Central
 > **Sistema:** Finalizado, testado e pronto para defesa

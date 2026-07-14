@@ -19,10 +19,15 @@ normalizado) ou sintéticas — respeitam rigorosamente essa faixa negativa
 **Fallback Resiliente**: se o arquivo GeoTIFF não existir, as
 dependências ``rasterio``/``scipy`` não estiverem instaladas, ou
 ocorrer qualquer erro de leitura, o adaptador gera automaticamente
-um mapa sintético de **"Cubo Central"** — um platô quadrado de 50 cm ×
-50 cm que se eleva 10 cm a partir do fundo do caixão — para que a
-demonstração nunca pare e para facilitar testes físicos (basta erguer
-um bloco de 10 cm de areia no centro da mesa).
+um mapa sintético — **"Cubo Central"** (um platô quadrado que se eleva
+a partir do fundo do caixão) ou **"Morro Gaussiano"** (um monte suave
+centralizado) — para que a demonstração nunca pare e para facilitar
+testes físicos.  Os dois mapas sintéticos podem ser alternados em
+tempo real (ver ``AdaptadorMDE.alternar_mapa_sintetico``) e são
+sempre gerados dinamicamente a partir das dimensões físicas da mesa
+(``largura_mesa`` × ``comprimento_mesa`` × ``profundidade_caixa``)
+ativas na calibração corrente, garantindo alinhamento com o caixão
+físico independentemente do seu tamanho.
 
 Dependências externas (opcionais)::
 
@@ -37,11 +42,26 @@ Uso típico::
 from __future__ import annotations
 
 import os
+import sys
 import traceback
 from pathlib import Path
 
 import numpy as np
-from typing import Optional, Tuple, Union
+from typing import Callable, Optional, Tuple, Union
+
+# O console padrão do Windows usa a codepage cp1252, incapaz de
+# codificar símbolos matemáticos (∈, →, ×) usados nas mensagens deste
+# módulo.  Sem isto, qualquer print() com esses caracteres levanta
+# UnicodeEncodeError e derruba a aplicação/testes em uma instalação
+# Windows "limpa" (sem terminal UTF-8) — justamente o ambiente da
+# apresentação ao vivo.  Reconfigurar para UTF-8 com fallback seguro
+# elimina o crash sem exigir configuração externa (chcp 65001/PYTHONUTF8).
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
 
 try:
     import rasterio
@@ -55,35 +75,67 @@ except ImportError:
 
 
 # ============================================================================
-# Mapa Sintético "Cubo Central" — fallback vetorizado
+# Mapas Sintéticos — "Cubo Central" e "Morro Gaussiano" (fallback vetorizado)
 # ============================================================================
+#
+# Os dois mapas são funções puras de (x, y, largura_mesa, comprimento_mesa,
+# profundidade_caixa) — nunca de constantes absolutas fixas — para que a
+# geometria gerada acompanhe as dimensões físicas reais da mesa ativa
+# (definidas na GUI de configuração / calibração), permanecendo alinhada
+# ao caixão físico qualquer que seja o seu tamanho.
 
-CUBO_X_MIN: float = 0.50
-CUBO_X_MAX: float = 1.00
-CUBO_Y_MIN: float = 0.50
-CUBO_Y_MAX: float = 1.00
+TIPO_MAPA_CUBO: str = "cubo"
+TIPO_MAPA_GAUSSIANA: str = "gaussiana"
+
+NOME_MAPA: dict[str, str] = {
+    TIPO_MAPA_CUBO: "Cubo Central",
+    TIPO_MAPA_GAUSSIANA: "Morro Gaussiano",
+}
+
+_CUBO_FRACAO_MIN: float = 1.0 / 3.0
+_CUBO_FRACAO_MAX: float = 2.0 / 3.0
+"""O platô do Cubo Central ocupa o terço central de cada eixo da mesa —
+para a mesa padrão de 1,50 m isso reproduz exatamente o platô histórico
+de x,y ∈ [0.50, 1.00]."""
+
+# Constantes de referência (mesa padrão 1,50 m × 1,50 m × 0,20 m) — mantidas
+# para compatibilidade com testes e documentação; os valores reais usados em
+# runtime são recalculados dinamicamente por ``altura_cubo_central``.
+CUBO_X_MIN: float = 1.50 * _CUBO_FRACAO_MIN
+CUBO_X_MAX: float = 1.50 * _CUBO_FRACAO_MAX
+CUBO_Y_MIN: float = 1.50 * _CUBO_FRACAO_MIN
+CUBO_Y_MAX: float = 1.50 * _CUBO_FRACAO_MAX
 CUBO_Z_TARGET: float = -0.10
-"""Altitude-alvo (m) sobre o platô central: 10 cm acima do fundo."""
+"""Altitude-alvo (m) sobre o platô central: metade da profundidade do
+caixão acima do fundo."""
 
 FUNDO_Z_TARGET: float = -0.20
 """Altitude-alvo (m) fora do platô: fundo físico do caixão."""
+
+_GAUSSIANA_FRACAO_SIGMA2: float = 1.0 / 22.5
+"""``sigma²`` do monte gaussiano é proporcional à área da mesa — para a
+mesa padrão de 1,50 m × 1,50 m (área 2,25 m²), reproduz exatamente o
+``sigma² = 0.1`` do Morro Gaussiano histórico."""
 
 
 def altura_cubo_central(
     x: Union[float, np.ndarray],
     y: Union[float, np.ndarray],
+    largura_mesa: float = 1.50,
+    comprimento_mesa: float = 1.50,
+    profundidade_caixa: float = 0.20,
 ) -> Union[float, np.ndarray]:
     """Mapa sintético "Cubo Central" — plateau quadrado de teste físico.
 
-    Substitui o antigo Morro Gaussiano por uma geometria simples e fácil
-    de reproduzir fisicamente (basta um bloco/caixa de 10 cm de altura
-    e 50×50 cm de base no centro da mesa):
+    Geometria simples e fácil de reproduzir fisicamente (basta um bloco
+    no centro da mesa, com metade da altura da caixa):
 
     .. math::
 
         Z_{alvo}(x, y) = \\begin{cases}
-            -0.10 & \\text{se } 0.50 \\le x \\le 1.00 \\text{ e } 0.50 \\le y \\le 1.00 \\\\
-            -0.20 & \\text{caso contrário}
+            -\\dfrac{profundidade\\_caixa}{2} &
+                \\text{se } x, y \\text{ dentro do terço central da mesa} \\\\
+            -profundidade\\_caixa & \\text{caso contrário}
         \\end{cases}
 
     Totalmente vetorizada via ``numpy.where`` — aceita tanto escalares
@@ -96,21 +148,87 @@ def altura_cubo_central(
     x, y : float | np.ndarray
         Coordenada(s) na mesa, em metros.  Se arrays, devem ter a
         mesma shape.
+    largura_mesa, comprimento_mesa : float
+        Dimensões físicas da mesa (metros), da calibração ativa.
+    profundidade_caixa : float
+        Profundidade física do caixão (metros), da calibração ativa.
 
     Returns
     -------
     float | np.ndarray
-        Altitude-alvo em metros: ``-0.10`` dentro do platô central,
-        ``-0.20`` fora dele.  Mesma shape/tipo de ``x``.
+        Altitude-alvo em metros, na faixa ``[-profundidade_caixa, 0.0]``.
+        Mesma shape/tipo de ``x``.
     """
-    x_arr = np.asarray(x)
-    y_arr = np.asarray(y)
+    x_arr = np.asarray(x, dtype=np.float64)
+    y_arr = np.asarray(y, dtype=np.float64)
+
+    x_min = largura_mesa * _CUBO_FRACAO_MIN
+    x_max = largura_mesa * _CUBO_FRACAO_MAX
+    y_min = comprimento_mesa * _CUBO_FRACAO_MIN
+    y_max = comprimento_mesa * _CUBO_FRACAO_MAX
+    z_cubo = -profundidade_caixa / 2.0
+    z_fundo = -profundidade_caixa
 
     dentro_cubo = (
-        (x_arr >= CUBO_X_MIN) & (x_arr <= CUBO_X_MAX) &
-        (y_arr >= CUBO_Y_MIN) & (y_arr <= CUBO_Y_MAX)
+        (x_arr >= x_min) & (x_arr <= x_max) &
+        (y_arr >= y_min) & (y_arr <= y_max)
     )
-    resultado = np.where(dentro_cubo, CUBO_Z_TARGET, FUNDO_Z_TARGET)
+    resultado = np.where(dentro_cubo, z_cubo, z_fundo)
+
+    if np.isscalar(x) and np.isscalar(y):
+        return float(resultado)
+    return resultado
+
+
+def altura_gaussiana(
+    x: Union[float, np.ndarray],
+    y: Union[float, np.ndarray],
+    largura_mesa: float = 1.50,
+    comprimento_mesa: float = 1.50,
+    profundidade_caixa: float = 0.20,
+) -> Union[float, np.ndarray]:
+    """Mapa sintético "Morro Gaussiano" — monte suave centralizado na mesa.
+
+    .. math::
+
+        Z_{alvo}(x, y) = profundidade\\_caixa \\cdot \\left(
+            e^{-\\frac{(x - c_x)^2 + (y - c_y)^2}{\\sigma^2}} - 1 \\right)
+
+    onde :math:`(c_x, c_y)` é o centro geométrico da mesa e
+    :math:`\\sigma^2` é proporcional à área da mesa
+    (``largura_mesa × comprimento_mesa``), garantindo que a "largura" do
+    morro acompanhe as dimensões físicas reais.  No pico (centro da
+    mesa) ``Z = 0.0`` (nível da tampa); nas bordas, ``Z → -profundidade_caixa``
+    (fundo do caixão).
+
+    Totalmente vetorizada — aceita escalares ou arrays NumPy de qualquer
+    shape.
+
+    Parameters
+    ----------
+    x, y : float | np.ndarray
+        Coordenada(s) na mesa, em metros.
+    largura_mesa, comprimento_mesa : float
+        Dimensões físicas da mesa (metros), da calibração ativa.
+    profundidade_caixa : float
+        Profundidade física do caixão (metros), da calibração ativa.
+
+    Returns
+    -------
+    float | np.ndarray
+        Altitude-alvo em metros, na faixa ``[-profundidade_caixa, 0.0]``.
+        Mesma shape/tipo de ``x``.
+    """
+    x_arr = np.asarray(x, dtype=np.float64)
+    y_arr = np.asarray(y, dtype=np.float64)
+
+    cx = largura_mesa / 2.0
+    cy = comprimento_mesa / 2.0
+    sigma2 = largura_mesa * comprimento_mesa * _GAUSSIANA_FRACAO_SIGMA2
+    sigma2 = max(sigma2, 1e-9)  # evita divisão por zero em mesas degeneradas
+
+    dist2 = (x_arr - cx) ** 2 + (y_arr - cy) ** 2
+    resultado = profundidade_caixa * (np.exp(-dist2 / sigma2) - 1.0)
 
     if np.isscalar(x) and np.isscalar(y):
         return float(resultado)
@@ -137,9 +255,11 @@ class AdaptadorMDE:
     suaves (interpolação bilinear) em qualquer coordenada dentro da mesa.
 
     Se nenhum GeoTIFF for fornecido (ou a leitura falhar), o adaptador usa
-    o mapa sintético **Cubo Central** (``altura_cubo_central``), avaliado
-    analiticamente — sem interpolação — para preservar as bordas exatas
-    do platô.
+    um mapa sintético — **Cubo Central** (``altura_cubo_central``) ou
+    **Morro Gaussiano** (``altura_gaussiana``), conforme ``tipo_mapa`` —
+    avaliado analiticamente — sem interpolação — para preservar a
+    geometria exata do mapa.  Os dois mapas sintéticos podem ser
+    alternados em tempo real via ``alternar_mapa_sintetico()``.
 
     Parameters
     ----------
@@ -152,6 +272,10 @@ class AdaptadorMDE:
     profundidade_caixa : float
         Profundidade física do caixão, em metros (padrão: 0.20 = 20 cm).
         Define o piso da faixa normalizada: ``[-profundidade_caixa, 0.0]``.
+    tipo_mapa : str
+        Mapa sintético inicial usado como fallback (apenas relevante
+        quando nenhum GeoTIFF é carregado): ``TIPO_MAPA_CUBO`` ("cubo",
+        padrão) ou ``TIPO_MAPA_GAUSSIANA`` ("gaussiana").
     """
 
     def __init__(
@@ -160,11 +284,17 @@ class AdaptadorMDE:
         largura_mesa: float = 1.50,
         comprimento_mesa: float = 1.50,
         profundidade_caixa: float = 0.20,
+        tipo_mapa: str = TIPO_MAPA_CUBO,
     ) -> None:
         # Dimensões físicas da mesa
         self._largura_mesa = largura_mesa
         self._comprimento_mesa = comprimento_mesa
         self._profundidade_caixa = profundidade_caixa
+
+        # Mapa sintético ativo (usado apenas no fallback, sem GeoTIFF)
+        self._tipo_mapa: str = (
+            tipo_mapa if tipo_mapa in NOME_MAPA else TIPO_MAPA_CUBO
+        )
 
         # Estado interno
         self._grade_normalizada: Optional[np.ndarray] = None
@@ -319,16 +449,26 @@ class AdaptadorMDE:
     # Superfície sintética (fallback)
     # ------------------------------------------------------------------ #
 
-    def _gerar_superficie_sintetica(self, resolucao: int = 100) -> None:
-        """Gera o mapa sintético "Cubo Central" como fallback.
+    def _funcao_mapa_sintetico(self) -> Callable[..., Union[float, np.ndarray]]:
+        """Retorna a função analítica do mapa sintético ativo
+        (``altura_cubo_central`` ou ``altura_gaussiana``)."""
+        if self._tipo_mapa == TIPO_MAPA_GAUSSIANA:
+            return altura_gaussiana
+        return altura_cubo_central
 
-        Substitui o antigo Morro Gaussiano por um platô quadrado — ver
-        ``altura_cubo_central()`` para a definição matemática exata.
+    def _gerar_superficie_sintetica(self, resolucao: int = 100) -> None:
+        """Gera o mapa sintético ativo (Cubo Central ou Morro Gaussiano)
+        como fallback, dinamicamente escalado às dimensões físicas reais
+        da mesa (``largura_mesa`` × ``comprimento_mesa`` ×
+        ``profundidade_caixa``) ativas na calibração corrente — ver
+        ``altura_cubo_central()`` / ``altura_gaussiana()`` para a
+        definição matemática exata de cada um.
+
         A grade aqui gerada é usada **apenas para visualização**
         (``gerar_imagem_visualizacao``); a consulta pontual
         (``obter_z_alvo``) avalia a função analiticamente, sem depender
-        desta grade nem de interpolação, preservando as bordas exatas
-        do platô (sem suavização artificial).
+        desta grade nem de interpolação, preservando a geometria exata
+        do mapa (sem suavização artificial).
 
         Parameters
         ----------
@@ -340,16 +480,65 @@ class AdaptadorMDE:
         self._eixo_y = np.linspace(0.0, self._comprimento_mesa, resolucao)
         xx, yy = np.meshgrid(self._eixo_x, self._eixo_y)
 
-        self._grade_normalizada = altura_cubo_central(xx, yy)
+        funcao = self._funcao_mapa_sintetico()
+        self._grade_normalizada = funcao(
+            xx, yy,
+            largura_mesa=self._largura_mesa,
+            comprimento_mesa=self._comprimento_mesa,
+            profundidade_caixa=self._profundidade_caixa,
+        )
 
-        self._z_min_original = FUNDO_Z_TARGET
-        self._z_max_original = CUBO_Z_TARGET
+        self._z_min_original = -self._profundidade_caixa
+        self._z_max_original = float(self._grade_normalizada.max())
         self._carregado = True
         self._usando_sintetico = True
-        print(f"[MDE] Mapa sintético 'Cubo Central' gerado: {resolucao}×{resolucao}")
-        print(f"[MDE] Platô: x∈[{CUBO_X_MIN:.2f}, {CUBO_X_MAX:.2f}], "
-              f"y∈[{CUBO_Y_MIN:.2f}, {CUBO_Y_MAX:.2f}] → Z = {CUBO_Z_TARGET:.2f} m")
-        print(f"[MDE] Fundo (fora do platô): Z = {FUNDO_Z_TARGET:.2f} m")
+
+        nome = NOME_MAPA[self._tipo_mapa]
+        print(f"[MDE] Mapa sintético '{nome}' gerado: {resolucao}×{resolucao}")
+        print(f"[MDE] Mesa: {self._largura_mesa:.2f} m × "
+              f"{self._comprimento_mesa:.2f} m × {self._profundidade_caixa:.2f} m")
+        print(f"[MDE] Faixa: Z ∈ [-{self._profundidade_caixa:.2f}, "
+              f"{self._z_max_original:.2f}] m")
+
+    def alternar_mapa_sintetico(self) -> Optional[str]:
+        """Alterna em tempo real entre os mapas sintéticos "Cubo Central"
+        e "Morro Gaussiano" (tecla **M** em ``main.py``).
+
+        Só tem efeito quando o adaptador está usando um mapa sintético
+        (``usando_sintetico``); se um GeoTIFF real estiver carregado, a
+        chamada é ignorada (retorna ``None``) — o toggle é exclusivo dos
+        dois mapas de demonstração.
+
+        Returns
+        -------
+        str | None
+            O novo ``tipo_mapa`` ativo (``TIPO_MAPA_CUBO`` ou
+            ``TIPO_MAPA_GAUSSIANA``), ou ``None`` se não houver mapa
+            sintético ativo.
+        """
+        if not self._usando_sintetico:
+            return None
+
+        self._tipo_mapa = (
+            TIPO_MAPA_GAUSSIANA if self._tipo_mapa == TIPO_MAPA_CUBO
+            else TIPO_MAPA_CUBO
+        )
+        self._gerar_superficie_sintetica()
+        return self._tipo_mapa
+
+    @property
+    def tipo_mapa(self) -> str:
+        """Identificador do mapa sintético ativo (``"cubo"``/``"gaussiana"``),
+        independentemente de haver ou não um GeoTIFF real carregado."""
+        return self._tipo_mapa
+
+    @property
+    def nome_mapa_ativo(self) -> str:
+        """Nome legível do mapa atualmente em uso, para exibição em HUD:
+        ``"Cubo Central"``, ``"Morro Gaussiano"`` ou ``"GeoTIFF real"``."""
+        if not self._usando_sintetico:
+            return "GeoTIFF real"
+        return NOME_MAPA[self._tipo_mapa]
 
     # ------------------------------------------------------------------ #
     # Consulta pontual
@@ -358,11 +547,11 @@ class AdaptadorMDE:
     def obter_z_alvo(self, x: float, y: float) -> float:
         """Retorna a altura-alvo (Z_mesa) que a areia deve ter em (x, y).
 
-        No mapa sintético "Cubo Central", avalia ``altura_cubo_central()``
-        analiticamente (sem interpolação, bordas do platô exatas).  No
-        GeoTIFF real, usa interpolação bilinear via
-        ``RegularGridInterpolator``.  Pontos fora da mesa são clamped à
-        borda mais próxima.
+        No mapa sintético ativo (Cubo Central ou Morro Gaussiano), avalia
+        a função analiticamente (sem interpolação), dinamicamente escalada
+        às dimensões físicas reais da mesa.  No GeoTIFF real, usa
+        interpolação bilinear via ``RegularGridInterpolator``.  Pontos
+        fora da mesa são clamped à borda mais próxima.
 
         Este método é compatível com a assinatura esperada por
         ``gerar_mapa_cores(funcao_mde=mde.obter_z_alvo)``.
@@ -386,9 +575,15 @@ class AdaptadorMDE:
         x_c = max(0.0, min(x, self._largura_mesa))
         y_c = max(0.0, min(y, self._comprimento_mesa))
 
-        # Cubo Central: avaliação analítica exata (sem interpolação)
+        # Mapa sintético ativo: avaliação analítica exata (sem interpolação)
         if self._usando_sintetico:
-            return altura_cubo_central(x_c, y_c)
+            funcao = self._funcao_mapa_sintetico()
+            return funcao(
+                x_c, y_c,
+                largura_mesa=self._largura_mesa,
+                comprimento_mesa=self._comprimento_mesa,
+                profundidade_caixa=self._profundidade_caixa,
+            )
 
         if self._grade_normalizada is None:
             return 0.0
@@ -433,7 +628,16 @@ class AdaptadorMDE:
         ys_c = np.clip(ys, 0.0, self._comprimento_mesa)
 
         if self._usando_sintetico:
-            return np.asarray(altura_cubo_central(xs_c, ys_c), dtype=np.float64)
+            funcao = self._funcao_mapa_sintetico()
+            return np.asarray(
+                funcao(
+                    xs_c, ys_c,
+                    largura_mesa=self._largura_mesa,
+                    comprimento_mesa=self._comprimento_mesa,
+                    profundidade_caixa=self._profundidade_caixa,
+                ),
+                dtype=np.float64,
+            )
 
         if self._interpolador is not None:
             pontos = np.column_stack([ys_c.ravel(), xs_c.ravel()])
@@ -519,11 +723,10 @@ class AdaptadorMDE:
             fonte, 0.4, (255, 255, 255), 1,
         )
 
-        tipo = "Sintetico" if self._usando_sintetico else "GeoTIFF"
         cv2.putText(
             heatmap,
-            f"MDE ({tipo})",
-            (largura - 160, 20),
+            f"MDE ({self.nome_mapa_ativo})",
+            (largura - 190, 20),
             fonte, 0.4, (255, 255, 255), 1,
         )
 

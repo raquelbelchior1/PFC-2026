@@ -3,7 +3,7 @@
 ![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue?logo=python&logoColor=white)
 ![OpenCV](https://img.shields.io/badge/OpenCV-4.x-green?logo=opencv&logoColor=white)
 ![NumPy](https://img.shields.io/badge/NumPy-1.26.4-013243?logo=numpy&logoColor=white)
-![Testes](https://img.shields.io/badge/Testes_Unitários-53_passing-brightgreen)
+![Testes](https://img.shields.io/badge/Testes_Unitários-59_passing-brightgreen)
 ![Licença](https://img.shields.io/badge/Licença-Acadêmica-lightgrey)
 
 **Projeto Final de Curso (PFC) — Engenharia de Computação & Engenharia Eletrônica & Engenharia Cartográfica**  
@@ -21,6 +21,8 @@ O **AR Sandbox** projeta, em tempo real, uma **grade contínua de quadrados colo
 | 🔵 **Azul** | $Z_{real\_media} < Z_{MDE} - 0{,}02\text{ m}$ | Areia insuficiente — **Preencher** |
 | 🟢 **Verde** | Diferença $\leq 0{,}02\text{ m}$ | Dentro da tolerância — **OK** |
 
+Essa mesma legenda é desenhada **diretamente sobre a janela de projeção** como um HUD (overlay semi-transparente no canto superior esquerdo, `main._desenhar_legenda_hud`), junto com o estado atual do sistema (calibração pendente/carregada, pá virtual ativa) — tornando a demonstração autoexplicativa para a banca sem depender desta documentação.
+
 O sistema exibe **duas janelas simultâneas**:
 
 | Janela | Conteúdo |
@@ -30,14 +32,15 @@ O sistema exibe **duas janelas simultâneas**:
 
 ### Calibração da Tampa ("Lid Calibration") — uma única vez
 
-A mesa é calibrada **uma única vez**, colocando-se uma **tampa lisa e plana** sobre toda a área do caixão. Essa tampa representa o plano de referência $Z_{mesa} = 0{,}0\text{ m}$ (nível máximo de areia). Como a tampa cobre 100% do campo de visão do sensor, não há outliers a filtrar — o ajuste de plano usa **SVD puro** (sem RANSAC), evitando degeneração numérica e variância desnecessária.
+A mesa é calibrada **uma única vez**, colocando-se uma **tampa lisa e plana** sobre toda a área do caixão. Essa tampa representa o plano de referência $Z_{mesa} = 0{,}0\text{ m}$ (nível máximo de areia). O campo de visão do Kinect, porém, é **mais largo** que o caixão: a nuvem capturada inclui também a moldura de madeira, o piso ao redor e ruído da sala — outliers que não pertencem ao plano da tampa. Por isso o ajuste de plano usa **RANSAC** para isolar o maior conjunto de pontos coplanares (a tampa) antes de refinar a normal com **SVD** apenas sobre esses inliers.
 
 Ao pressionar **[C]**, o sistema:
-1. Captura a nuvem de pontos da tampa.
-2. Ajusta o plano por **SVD** (mínimos quadráticos) e extrai o vetor normal.
-3. Constrói uma base ortonormal por **Gram-Schmidt**.
-4. Monta a matriz de transformação $T_{final}$ (4×4), deslocando o centro do plano detectado para $(L_x/2,\, L_y/2,\, 0)$.
-5. **Salva `T_final` em `calibration_data.json`.**
+1. Captura a nuvem de pontos (tampa + possível moldura/piso/ruído).
+2. Roda **RANSAC** (1000 iterações, limiar de inlier 3 cm — `ajustar_plano_ransac`) para isolar o plano dominante da tampa, descartando outliers.
+3. Ajusta o plano dos inliers por **SVD** (mínimos quadráticos) e extrai o vetor normal.
+4. Constrói uma base ortonormal por **Gram-Schmidt**.
+5. Monta a matriz de transformação $T_{final}$ (4×4), deslocando o centro do plano detectado para $(L_x/2,\, L_y/2,\, 0)$.
+6. **Salva `T_final` em `calibration_data.json`.**
 
 Nas próximas execuções, esse arquivo é **carregado automaticamente** e a calibração manual é **pulada** — a tecla **[C]** continua disponível a qualquer momento para recalibrar (por exemplo, após reposicionar o sensor).
 
@@ -133,7 +136,7 @@ O resultado é uma **projeção sólida e limpa** sobre a areia — como "curvas
 | Camada | Módulo | Responsabilidade |
 |---|---|---|
 | **Hardware** | `kinect_sensor.py` | Classe `KinectSensor`: Open3D → freenect → simulação com **grade persistente** + `modificar_areia()`, faixa Z ∈ [-0,20, 0,00] m |
-| **Lógica** | `motor_caixao_areia.py` | Álgebra linear pura: **SVD** (calibração da tampa) + RANSAC opcional, Gram-Schmidt, Transformação 4×4, back-projection pinhole, Tsai, **discretização em grade**, coloração por célula (`fillPoly`), cache JSON de calibração |
+| **Lógica** | `motor_caixao_areia.py` | Álgebra linear pura: **RANSAC** (isola o plano da tampa, descarta moldura/piso/ruído) + **SVD** de refinamento, Gram-Schmidt, Transformação 4×4, back-projection pinhole, Tsai, **discretização em grade**, coloração por célula (`fillPoly`), cache JSON de calibração |
 | **Dados** | `mde_cartografia.py` | Classe `AdaptadorMDE`: GeoTIFF via rasterio → fallback **Cubo Central** (platô 50×50 cm a -0,10 m) + heatmap |
 | **Orquestração** | `main.py` | Máquina de estados, dual-window, **mouse callback** (`cv2.setMouseCallback`), carregamento automático de `calibration_data.json` |
 
@@ -145,11 +148,11 @@ O resultado é uma **projeção sólida e limpa** sobre a areia — como "curvas
 PFC-2026/
 ├── main.py                    # Máquina de Estados + Mouse Callback — ponto de entrada
 ├── kinect_sensor.py           # KinectSensor OOP com grade persistente + modificar_areia()
-├── motor_caixao_areia.py      # Motor matemático (SVD, Gram-Schmidt, Tsai, Grade Discretizada, cache JSON)
+├── motor_caixao_areia.py      # Motor matemático (RANSAC, SVD, Gram-Schmidt, Tsai, Grade Discretizada, cache JSON)
 ├── mde_cartografia.py         # AdaptadorMDE: GeoTIFF + fallback Cubo Central + heatmap
 ├── calibration_data.json      # Cache da matriz T_final (gerado após a 1ª calibração — não versionado)
 │
-├── test_motor_caixao.py       # 53 testes unitários automatizados
+├── test_motor_caixao.py       # 59 testes unitários automatizados
 ├── requirements.txt           # Dependências Python (pip install -r requirements.txt)
 ├── DOCUMENTACAO_OFICIAL.md    # Documentação acadêmica completa para a banca
 └── README.md                  # Este arquivo
@@ -182,14 +185,17 @@ pip install -r requirements.txt
 
 O `requirements.txt` inclui:
  
-| Pacote | Versão exata | Uso |
+| Pacote | Versão | Uso |
 |---|---|---|
-| `numpy` | **1.26.4** | Álgebra linear — **obrigatório** (não usar 2.x) |
-| `opencv-python` | 4.x | Visão computacional — **obrigatório** |
-| `comtypes` | **1.3.1** | Interface COM do Kinect — **obrigatório** (não usar 1.4.x) |
-| `pykinect2` | qualquer | Kinect v2 via SDK Microsoft — necessário apenas com hardware real |
-| `rasterio` e dependências | qualquer | Leitura de GeoTIFF — opcional (sem ele usa o mapa sintético Cubo Central) |
-| `pytest` | qualquer | Testes unitários — opcional |
+| `numpy` | **== 1.26.4** (fixo) | Álgebra linear — **obrigatório** (não usar 2.x, quebra os patches do pykinect2) |
+| `opencv-python` | >= 4.8, < 5 | Visão computacional — **obrigatório** |
+| `comtypes` | **== 1.3.1** (fixo) | Interface COM do Kinect — **obrigatório** (não usar 1.4.x) |
+| `pykinect2` | == 0.1.0 | Kinect v2 via SDK Microsoft — necessário apenas com hardware real |
+| `rasterio` | >= 1.3 | Leitura de GeoTIFF — opcional (sem ele usa o mapa sintético Cubo Central) |
+| `scipy` | >= 1.11 | Interpolação bilinear do MDE (GeoTIFF real) — opcional |
+| `pytest` | >= 7.0 | Testes unitários — opcional |
+
+> As demais dependências usam pisos mínimos (`>=`) em vez de fixações exatas propositalmente — evita falhas de instalação no Windows quando não existe wheel pré-compilada para uma versão exata na combinação de Python instalada.
  
 > **Nota:** o Kinect v2 também requer o [Kinect for Windows SDK v2](https://www.microsoft.com/en-us/download/details.aspx?id=44561) e o [Kinect for Windows Runtime v2](https://www.microsoft.com/en-us/download/details.aspx?id=44559) instalados separadamente no Windows. Reinicie o PC após instalar ambos.
 
@@ -242,9 +248,11 @@ COMPRIMENTO_MESA     = 1.50              # metros
 PROFUNDIDADE_CAIXA   = 0.20              # metros (20 cm) — Z_mesa ∈ [-0.20, 0.00]
 ALTURA_KINECT        = 2.50              # metros (acima do nível da tampa, Z=0)
 CAMINHO_CALIBRACAO   = "calibration_data.json"  # cache da matriz T_final
+RANSAC_N_ITER        = 1000              # iterações do RANSAC na calibração da tampa
+RANSAC_LIMIAR_DIST   = 0.03              # limiar de inlier do RANSAC, metros (3 cm)
 CELULAS_GRADE_X      = 30                # colunas da malha (5 cm cada)
 CELULAS_GRADE_Y      = 30                # linhas da malha (5 cm cada)
-RAIO_PA_VIRTUAL      = 0.10              # raio do pincel do mouse (10 cm)
+RAIO_PA_VIRTUAL      = 0.05              # raio do pincel do mouse (5 cm), cavar e preencher
 INTENSIDADE_PA_VIRTUAL = 0.008           # deslocamento por evento (8 mm)
 FORCAR_SIMULACAO     = False             # True para ignorar Kinect
 ```
@@ -257,11 +265,13 @@ FORCAR_SIMULACAO     = False             # True para ignorar Kinect
 
 | Tecla | Ação |
 |---|---|
-| **C** | Calibrar com a tampa plana (SVD + Gram-Schmidt + Matriz 4×4) — salva `calibration_data.json` |
+| **C** | Calibrar com a tampa plana (RANSAC + SVD + Gram-Schmidt + Matriz 4×4) — salva `calibration_data.json` |
 | **F** | Toggle tela cheia na janela Projecao_Areia |
 | **Q** / **ESC** | Encerrar |
 
-### Mouse (Simulação Interativa)
+### Mouse (Simulação Interativa) — Pá Virtual
+
+Raio de ação: **5 cm** ao redor do cursor, tanto para cavar quanto para preencher.
 
 | Ação | Efeito |
 |---|---|
@@ -275,7 +285,7 @@ FORCAR_SIMULACAO     = False             # True para ignorar Kinect
 | Passo | Ação | Resultado esperado |
 |---|---|---|
 | 1 | `python main.py` | Duas janelas abrem: **Projecao_Areia** e **Gabarito_MDE** |
-| 2 | (1ª vez) Pressionar **C**; (execuções seguintes) automático | Calibração da tampa (SVD) e salvamento de `calibration_data.json`; execuções seguintes carregam o cache e pulam direto para o AR_LOOP |
+| 2 | (1ª vez) Pressionar **C**; (execuções seguintes) automático | Calibração da tampa (RANSAC + SVD) e salvamento de `calibration_data.json`; execuções seguintes carregam o cache e pulam direto para o AR_LOOP |
 | 3 | Observar **Projecao_Areia** | Grade contínua de quadrados coloridos refletindo Z_mesa ∈ [-0,20, 0,00] m |
 | 4 | Observar **Gabarito_MDE** | Heatmap do Cubo Central (platô 50×50 cm) ou GeoTIFF real como referência |
 | 5 | **Arrastar botão direito** no platô central (fora do alvo) | Quadrados mudam de vermelho/azul → verde (areia ajustando ao platô -0,10 m) |
@@ -291,16 +301,17 @@ FORCAR_SIMULACAO     = False             # True para ignorar Kinect
 
 ## Testes Unitários
 
-53 testes automatizados cobrindo todo o motor matemático e o mapa sintético:
+59 testes automatizados cobrindo todo o motor matemático e o mapa sintético:
 
 ```bash
 python -m unittest test_motor_caixao -v
-# Resultado: 52 passed, 1 skipped (Open3D não instalado)
+# Resultado: 58 passed, 1 skipped (Open3D não instalado)
 ```
 
 | Classe | Testes | Componente |
 |---|---|---|
 | `TestAjustePlano` | 4 | SVD, normal unitária, equação do plano |
+| `TestRANSAC` | 5 | Rejeição de outliers (moldura/piso), limiar de 3 cm na fronteira exata, `RuntimeError`/`ValueError`, refinamento SVD só sobre inliers |
 | `TestGramSchmidt` | 2 | Ortogonalidade, exceção para paralelos |
 | `TestConstruirBase` | 3 | Ortonormalidade mútua dos 3 eixos |
 | `TestMatrizTransformacao` | 3 | Identidade, translação, $z_{mesa} = 0$ |
@@ -308,7 +319,7 @@ python -m unittest test_motor_caixao -v
 | `TestProjecaoTsai` | 3 | Projeção pinhole, deslocamento em $x$ |
 | `TestLeituraRGBD` | 1 | Importação condicional Open3D |
 | `TestBackProjectionMesa` | 4 | Convenção de sinal Z (pinhole → mesa), filtro de alcance |
-| `TestCalibracaoTampa` | 5 | SVD na tampa Z=0, T_shift, areia negativa após calibração |
+| `TestCalibracaoTampa` | 6 | SVD na tampa Z=0, T_shift, areia negativa após calibração, calibração RANSAC com moldura/piso contaminando a nuvem |
 | `TestPipeline` | 2 | Integração completa Passos 1+2 (genérico) |
 | `TestPersistenciaCalibracao` | 4 | Round-trip JSON, arquivo ausente/corrompido, shape inválida |
 | `TestCuboCentral` | 7 | Platô -0,10 m, fundo -0,20 m, bordas, versão vetorizada |
@@ -400,6 +411,7 @@ python diagnostico_kinect.py                              # todos os 6 passos �
 
 | Versão | Data | Mudança |
 |---|---|---|
+| **5.0** | Julho/2026 | **RANSAC obrigatório na calibração da tampa + HUD on-screen** — o FOV do Kinect é mais largo que o caixão (captura moldura de madeira, piso e ruído da sala), então a calibração oficial (`main._executar_calibracao`) passou a rodar **RANSAC** (1000 iterações, limiar de inlier 3 cm — `RANSAC_N_ITER`/`RANSAC_LIMIAR_DIST`) antes do refinamento por SVD, substituindo o SVD puro da versão 4.0. `pipeline_plano_e_base()` passou a repassar `n_iter`/`limiar_dist`/`min_inliers_ratio` para `ajustar_plano_ransac()`. Adicionada legenda visual (HUD) desenhada diretamente sobre a janela de projeção (`main._desenhar_legenda_hud`): overlay semi-transparente com as cores Vermelho/Azul/Verde, seus significados, e o estado atual do sistema (calibração pendente/cache/manual, pá virtual ativa). Raio da pá virtual corrigido para 5 cm (era 10 cm na documentação, já era 5 cm no código). Corrigido `UnicodeEncodeError` em consoles Windows cp1252 ao imprimir símbolos matemáticos (∈, →) — `sys.stdout.reconfigure(encoding="utf-8")` aplicado em `main.py`, `kinect_sensor.py` e `mde_cartografia.py`. `requirements.txt` relaxado para pisos mínimos (`>=`) em pacotes sem exigência de compatibilidade binária, e adicionada a dependência `scipy` (usada por `AdaptadorMDE` mas ausente do arquivo). Suíte de testes expandida de 53 para 59 casos (`TestRANSAC` + teste de calibração RANSAC com outliers). |
 | **4.0** | Julho/2026 | **Calibração da Tampa + convenção Z negativa** — nova metodologia de calibração oficial: a mesa é calibrada **uma única vez** com uma tampa lisa e plana cobrindo todo o caixão (plano de referência $Z_{mesa}=0$), usando **SVD puro** (sem RANSAC, já que a tampa não tem outliers). A matriz $T_{final}$ é persistida em `calibration_data.json` e carregada automaticamente nas execuções seguintes (`salvar_matriz_calibracao`/`carregar_matriz_calibracao`). A areia passa a ocupar a faixa **negativa** $Z_{mesa} \in [-0{,}20, 0{,}0]$ m (fundo → tampa) em vez de $[0, 0{,}30]$ m — corrigido também um bug de convenção de sinal na back-projection pinhole (`profundidade_para_nuvem_mesa`, nova função pura em `motor_caixao_areia.py`), que sem a correção produziria Z positivo para a areia real. O Morro Gaussiano sintético foi substituído pelo **Cubo Central** (`altura_cubo_central`, `mde_cartografia.py`): platô de 50×50 cm a -0,10 m sobre um fundo a -0,20 m, mais fácil de reproduzir fisicamente para testes com a banca. Adicionada classificação de cor vetorizada (`cor_por_diferenca_vetorizado`) e consulta MDE vetorizada (`AdaptadorMDE.obter_z_alvo_array`), usadas por `gerar_imagem_grade_cores` para evitar o laço Python célula-a-célula. Suíte de testes expandida de 26 para 53 casos. |
 | **3.3** | Maio/2026 | **Calibração robusta com RANSAC** — adicionada função `ajustar_plano_ransac()` em `motor_caixao_areia.py`, aplicada antes dos mínimos quadráticos via SVD. O RANSAC (1000 iterações, limiar 1 cm, mínimo 30 % de inliers) identifica o conjunto dominante de pontos coplanares (fundo do caixão) e descarta outliers de paredes, chão externo e bordas. A amostragem dos candidatos é ponderada por uma Gaussiana centrada na região central da nuvem, refletindo que o Kinect está centralizado sobre o caixão. O refinamento SVD é executado somente sobre os inliers selecionados. `pipeline_plano_e_base()` atualizado de forma transparente; `main.py` sem alterações. |
 | **3.2** | Maio/2026 | **Compatibilidade Python 3.12** — correções nos arquivos do pykinect2: mock de `numpy.distutils`, `sizeof(tagSTATSTG)==80`, comentar `_check_version`, substituir `time.clock()` por `time.perf_counter()` e `dtype=numpy.object` por `dtype=object`. Versões fixadas: numpy 1.26.4 e comtypes 1.3.1. |

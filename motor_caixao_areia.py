@@ -86,7 +86,7 @@ def ajustar_plano_svd(pontos: np.ndarray) -> Tuple[np.ndarray, float, np.ndarray
 def ajustar_plano_ransac(
     pontos: np.ndarray,
     n_iter: int = 1000,
-    limiar_dist: float = 0.01,
+    limiar_dist: float = 0.03,
     min_inliers_ratio: float = 0.3,
     semente_rng: Optional[int] = None,
 ) -> Tuple[np.ndarray, float, np.ndarray]:
@@ -112,8 +112,12 @@ def ajustar_plano_ransac(
         estatística para nuvens com ~30 % de inliers.
     limiar_dist : float
         Distância máxima (metros) de um ponto ao plano para ser
-        considerado inlier.  0,01 m (1 cm) é adequado para o
-        Kinect v2 (ruído ~1–3 mm) com areia irregular (~5 mm).
+        considerado inlier.  0,03 m (3 cm) é o padrão usado na
+        calibração da tampa: o campo de visão do Kinect é mais
+        largo que o caixão de areia, capturando também a moldura
+        de madeira, o piso e ruído da sala ao redor — pontos que
+        ficam a mais de 3 cm do plano dominante da tampa são
+        tratados como outliers e descartados.
     min_inliers_ratio : float
         Fração mínima de inliers (em relação ao total de pontos)
         necessária para aceitar o resultado.  Levanta ``RuntimeError``
@@ -1013,18 +1017,26 @@ def pipeline_plano_e_base(
     pontos: np.ndarray,
     semente: Optional[np.ndarray] = None,
     usar_ransac: bool = False,
+    n_iter: int = 1000,
+    limiar_dist: float = 0.03,
+    min_inliers_ratio: float = 0.3,
+    semente_rng: Optional[int] = None,
 ) -> Tuple[np.ndarray, float, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Executa os Passos 1 e 2 de uma só vez (ajuste de plano + base + matriz).
 
     A calibração oficial do sistema (Seção "Lid Calibration") é feita **uma
     única vez**, com a tampa lisa e plana colocada sobre toda a área do
-    caixão de areia.  Como a tampa cobre 100% do campo de visão do sensor,
-    a nuvem capturada não contém outliers (paredes, areia irregular, etc.)
-    — todo ponto pertence ao mesmo plano físico.  Nessas condições, o ajuste
-    de mínimos quadráticos via SVD (``ajustar_plano_svd``) já é ótimo e
-    numericamente estável, dispensando o custo extra do RANSAC.  Usar RANSAC
-    aqui apenas reintroduziria variância (amostragem aleatória) sem nenhum
-    outlier para filtrar — por isso o padrão é SVD puro.
+    caixão de areia.  O campo de visão do Kinect, porém, é **mais largo**
+    que o caixão: a nuvem capturada inclui também a moldura de madeira, o
+    piso ao redor e ruído da sala — outliers que não pertencem ao plano da
+    tampa.  Por isso ``usar_ransac=True`` é o modo usado pela calibração
+    oficial (ver ``main._executar_calibracao``): o RANSAC
+    (``ajustar_plano_ransac``) isola primeiro o maior conjunto de pontos
+    coplanares (a tampa) e só então refina a normal com SVD **apenas**
+    sobre esses inliers, descartando moldura/piso/ruído antes do ajuste de
+    mínimos quadráticos.  ``usar_ransac=False`` (SVD puro) permanece
+    disponível para cenas já garantidamente livres de outliers (ex.: testes
+    unitários com nuvens sintéticas 100% coplanares).
 
     Parameters
     ----------
@@ -1034,15 +1046,30 @@ def pipeline_plano_e_base(
         Vetor semente para o Gram-Schmidt (ver ``construir_base_mesa``).
     usar_ransac : bool
         Se ``True``, filtra outliers com RANSAC antes do SVD
-        (``ajustar_plano_ransac``).  Útil apenas para cenas com objetos
-        espúrios; não é necessário para a calibração com tampa.
+        (``ajustar_plano_ransac``) — modo usado pela calibração oficial da
+        tampa, dado que o FOV do sensor extrapola o caixão.
+    n_iter : int
+        Iterações do RANSAC (apenas se ``usar_ransac=True``). Padrão: 1000.
+    limiar_dist : float
+        Distância máxima ao plano para inlier, em metros (apenas se
+        ``usar_ransac=True``). Padrão: 0,03 m (3 cm).
+    min_inliers_ratio : float
+        Fração mínima de inliers exigida (apenas se ``usar_ransac=True``).
+    semente_rng : int | None
+        Semente do gerador aleatório do RANSAC (reprodutibilidade).
 
     Returns
     -------
     normal, d, centroide, X_mesa, Y_mesa, Z_mesa, T
     """
     if usar_ransac:
-        normal, d, centroide = ajustar_plano_ransac(pontos)
+        normal, d, centroide = ajustar_plano_ransac(
+            pontos,
+            n_iter=n_iter,
+            limiar_dist=limiar_dist,
+            min_inliers_ratio=min_inliers_ratio,
+            semente_rng=semente_rng,
+        )
     else:
         normal, d, centroide = ajustar_plano_svd(pontos)
     X_mesa, Y_mesa, Z_mesa = construir_base_mesa(normal, semente)
