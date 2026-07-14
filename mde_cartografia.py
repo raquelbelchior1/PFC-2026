@@ -7,11 +7,22 @@ Lê um Modelo Digital de Elevação no formato GeoTIFF (.tif) fornecido
 pela equipe de Cartografia, normaliza as elevações para a escala
 física da caixa de areia e expõe consultas pontuais interpoladas.
 
+**Convenção de Z (referencial da mesa, pós-calibração da tampa)**::
+
+    Z_mesa = 0.0                 → nível da tampa (topo do caixão)
+    Z_mesa = -profundidade_caixa → fundo físico do caixão (padrão: -0.20 m)
+
+Todas as alturas-alvo retornadas por este módulo — reais (GeoTIFF
+normalizado) ou sintéticas — respeitam rigorosamente essa faixa negativa
+``[-profundidade_caixa, 0.0]``.
+
 **Fallback Resiliente**: se o arquivo GeoTIFF não existir, as
 dependências ``rasterio``/``scipy`` não estiverem instaladas, ou
 ocorrer qualquer erro de leitura, o adaptador gera automaticamente
-um **Morro Gaussiano** sintético (pico de 0.30 m no centro, caindo
-a 0 nas bordas) para que a demonstração nunca pare.
+um mapa sintético de **"Cubo Central"** — um platô quadrado de 50 cm ×
+50 cm que se eleva 10 cm a partir do fundo do caixão — para que a
+demonstração nunca pare e para facilitar testes físicos (basta erguer
+um bloco de 10 cm de areia no centro da mesa).
 
 Dependências externas (opcionais)::
 
@@ -30,7 +41,7 @@ import traceback
 from pathlib import Path
 
 import numpy as np
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Union
 
 try:
     import rasterio
@@ -43,6 +54,69 @@ except ImportError:
     RegularGridInterpolator = None  # type: ignore[assignment, misc]
 
 
+# ============================================================================
+# Mapa Sintético "Cubo Central" — fallback vetorizado
+# ============================================================================
+
+CUBO_X_MIN: float = 0.50
+CUBO_X_MAX: float = 1.00
+CUBO_Y_MIN: float = 0.50
+CUBO_Y_MAX: float = 1.00
+CUBO_Z_TARGET: float = -0.10
+"""Altitude-alvo (m) sobre o platô central: 10 cm acima do fundo."""
+
+FUNDO_Z_TARGET: float = -0.20
+"""Altitude-alvo (m) fora do platô: fundo físico do caixão."""
+
+
+def altura_cubo_central(
+    x: Union[float, np.ndarray],
+    y: Union[float, np.ndarray],
+) -> Union[float, np.ndarray]:
+    """Mapa sintético "Cubo Central" — plateau quadrado de teste físico.
+
+    Substitui o antigo Morro Gaussiano por uma geometria simples e fácil
+    de reproduzir fisicamente (basta um bloco/caixa de 10 cm de altura
+    e 50×50 cm de base no centro da mesa):
+
+    .. math::
+
+        Z_{alvo}(x, y) = \\begin{cases}
+            -0.10 & \\text{se } 0.50 \\le x \\le 1.00 \\text{ e } 0.50 \\le y \\le 1.00 \\\\
+            -0.20 & \\text{caso contrário}
+        \\end{cases}
+
+    Totalmente vetorizada via ``numpy.where`` — aceita tanto escalares
+    quanto arrays NumPy de qualquer shape (uso recomendado em hardware
+    de baixo custo: uma única chamada classifica a grade inteira sem
+    laços Python).
+
+    Parameters
+    ----------
+    x, y : float | np.ndarray
+        Coordenada(s) na mesa, em metros.  Se arrays, devem ter a
+        mesma shape.
+
+    Returns
+    -------
+    float | np.ndarray
+        Altitude-alvo em metros: ``-0.10`` dentro do platô central,
+        ``-0.20`` fora dele.  Mesma shape/tipo de ``x``.
+    """
+    x_arr = np.asarray(x)
+    y_arr = np.asarray(y)
+
+    dentro_cubo = (
+        (x_arr >= CUBO_X_MIN) & (x_arr <= CUBO_X_MAX) &
+        (y_arr >= CUBO_Y_MIN) & (y_arr <= CUBO_Y_MAX)
+    )
+    resultado = np.where(dentro_cubo, CUBO_Z_TARGET, FUNDO_Z_TARGET)
+
+    if np.isscalar(x) and np.isscalar(y):
+        return float(resultado)
+    return resultado
+
+
 class AdaptadorMDE:
     """Lê um GeoTIFF e fornece elevações normalizadas para a caixa de areia.
 
@@ -51,7 +125,9 @@ class AdaptadorMDE:
     1. **Leitura** — abre o GeoTIFF com ``rasterio`` e extrai a primeira
        banda como matriz de elevações (linhas × colunas).
     2. **Normalização Z** — mapeia o intervalo real de elevações
-       ``[z_min, z_max]`` do terreno para ``[0, altura_max_areia]``.
+       ``[z_min, z_max]`` do terreno para ``[-profundidade_caixa, 0.0]``,
+       onde ``0.0`` é o nível da tampa de calibração (topo do caixão) e
+       ``-profundidade_caixa`` é o fundo físico.
     3. **Mapeamento XY** — cria dois eixos lineares que vão de
        ``0`` a ``largura_mesa`` (X) e ``0`` a ``comprimento_mesa`` (Y),
        um por coluna e um por linha da grade.
@@ -59,6 +135,11 @@ class AdaptadorMDE:
     A consulta ``obter_z_alvo(x, y)`` usa
     ``scipy.interpolate.RegularGridInterpolator`` para retornar valores
     suaves (interpolação bilinear) em qualquer coordenada dentro da mesa.
+
+    Se nenhum GeoTIFF for fornecido (ou a leitura falhar), o adaptador usa
+    o mapa sintético **Cubo Central** (``altura_cubo_central``), avaliado
+    analiticamente — sem interpolação — para preservar as bordas exatas
+    do platô.
 
     Parameters
     ----------
@@ -68,8 +149,9 @@ class AdaptadorMDE:
         Dimensão X da caixa de areia, em metros.
     comprimento_mesa : float
         Dimensão Y da caixa de areia, em metros.
-    altura_max_areia : float
-        Espessura máxima de areia mapeável, em metros.
+    profundidade_caixa : float
+        Profundidade física do caixão, em metros (padrão: 0.20 = 20 cm).
+        Define o piso da faixa normalizada: ``[-profundidade_caixa, 0.0]``.
     """
 
     def __init__(
@@ -77,12 +159,12 @@ class AdaptadorMDE:
         caminho_geotiff: str = "",
         largura_mesa: float = 1.50,
         comprimento_mesa: float = 1.50,
-        altura_max_areia: float = 0.30,
+        profundidade_caixa: float = 0.20,
     ) -> None:
         # Dimensões físicas da mesa
         self._largura_mesa = largura_mesa
         self._comprimento_mesa = comprimento_mesa
-        self._altura_max_areia = altura_max_areia
+        self._profundidade_caixa = profundidade_caixa
 
         # Estado interno
         self._grade_normalizada: Optional[np.ndarray] = None
@@ -189,20 +271,20 @@ class AdaptadorMDE:
             print(f"[MDE] {pixels_invalidos} pixels nodata/NaN substituídos "
                   f"pelo mínimo válido ({minimo_valido:.2f} m).")
 
-        # 2. Normalização Z: [z_min, z_max] → [0, altura_max_areia]
+        # 2. Normalização Z: [z_min, z_max] → [-profundidade_caixa, 0.0]
         self._z_min_original = float(np.min(elevacoes))
         self._z_max_original = float(np.max(elevacoes))
 
         amplitude = self._z_max_original - self._z_min_original
         if amplitude < 1e-12:
-            # Terreno plano — normalizar para metade da altura
+            # Terreno plano — normalizar para o meio da profundidade
             self._grade_normalizada = np.full_like(
-                elevacoes, self._altura_max_areia / 2.0
+                elevacoes, -self._profundidade_caixa / 2.0
             )
         else:
             self._grade_normalizada = (
                 (elevacoes - self._z_min_original) / amplitude
-            ) * self._altura_max_areia
+            ) * self._profundidade_caixa - self._profundidade_caixa
 
         # 3. Mapeamento XY: criar eixos em metros
         n_linhas, n_colunas = self._grade_normalizada.shape
@@ -228,7 +310,7 @@ class AdaptadorMDE:
         print(f"[MDE] Altitude real variando de "
               f"{self._z_min_original:.2f} a {self._z_max_original:.2f} metros.")
         print(f"[MDE] Normalizado para: "
-              f"0.000 m → {self._altura_max_areia:.3f} m")
+              f"-{self._profundidade_caixa:.3f} m → 0.000 m")
         print(f"[MDE] Mesa: {self._largura_mesa:.2f} m × "
               f"{self._comprimento_mesa:.2f} m")
         print("=" * 60)
@@ -238,65 +320,49 @@ class AdaptadorMDE:
     # ------------------------------------------------------------------ #
 
     def _gerar_superficie_sintetica(self, resolucao: int = 100) -> None:
-        """Gera um Morro Gaussiano centralizado na mesa como fallback.
+        """Gera o mapa sintético "Cubo Central" como fallback.
 
-        A superfície produzida é:
-
-        .. math::
-
-            z(x, y) = 0.3 \\cdot \\exp\\!\\left(
-                -\\frac{(x - 0.75)^2 + (y - 0.75)^2}{0.1}\\right)
-
-        - Pico no centro (0.75, 0.75): Z = 0.30 m
-        - Bordas (0, 0) ou (1.5, 1.5): Z ≈ 0.00 m
-
-        Combinado com o mock do Kinect (plano a Z = 0.15 m), gera
-        as três cores: Vermelho nas bordas, Azul no centro, Verde
-        no anel intermediário.
+        Substitui o antigo Morro Gaussiano por um platô quadrado — ver
+        ``altura_cubo_central()`` para a definição matemática exata.
+        A grade aqui gerada é usada **apenas para visualização**
+        (``gerar_imagem_visualizacao``); a consulta pontual
+        (``obter_z_alvo``) avalia a função analiticamente, sem depender
+        desta grade nem de interpolação, preservando as bordas exatas
+        do platô (sem suavização artificial).
 
         Parameters
         ----------
         resolucao : int
-            Número de pontos por eixo na grade sintética.
+            Número de pontos por eixo na grade sintética (apenas para
+            a visualização em heatmap).
         """
         self._eixo_x = np.linspace(0.0, self._largura_mesa, resolucao)
         self._eixo_y = np.linspace(0.0, self._comprimento_mesa, resolucao)
         xx, yy = np.meshgrid(self._eixo_x, self._eixo_y)
 
-        h = self._altura_max_areia  # 0.30 m
-        cx = self._largura_mesa / 2.0       # 0.75 m
-        cy = self._comprimento_mesa / 2.0   # 0.75 m
+        self._grade_normalizada = altura_cubo_central(xx, yy)
 
-        self._grade_normalizada = h * np.exp(
-            -((xx - cx) ** 2 + (yy - cy) ** 2) / 0.1
-        )
-
-        if RegularGridInterpolator is not None:
-            self._interpolador = RegularGridInterpolator(
-                (self._eixo_y, self._eixo_x),
-                self._grade_normalizada,
-                method="linear",
-                bounds_error=False,
-                fill_value=None,
-            )
-
-        self._z_min_original = 0.0
-        self._z_max_original = h
+        self._z_min_original = FUNDO_Z_TARGET
+        self._z_max_original = CUBO_Z_TARGET
         self._carregado = True
         self._usando_sintetico = True
-        print(f"[MDE] Morro Gaussiano sintético gerado: {resolucao}×{resolucao}")
-        print(f"[MDE] Pico em ({cx:.2f}, {cy:.2f}): Z = {h:.3f} m")
-        print(f"[MDE] Bordas: Z ≈ 0.000 m")
+        print(f"[MDE] Mapa sintético 'Cubo Central' gerado: {resolucao}×{resolucao}")
+        print(f"[MDE] Platô: x∈[{CUBO_X_MIN:.2f}, {CUBO_X_MAX:.2f}], "
+              f"y∈[{CUBO_Y_MIN:.2f}, {CUBO_Y_MAX:.2f}] → Z = {CUBO_Z_TARGET:.2f} m")
+        print(f"[MDE] Fundo (fora do platô): Z = {FUNDO_Z_TARGET:.2f} m")
 
     # ------------------------------------------------------------------ #
     # Consulta pontual
     # ------------------------------------------------------------------ #
 
     def obter_z_alvo(self, x: float, y: float) -> float:
-        """Retorna a altura normalizada que a areia deve ter em (x, y).
+        """Retorna a altura-alvo (Z_mesa) que a areia deve ter em (x, y).
 
-        Usa interpolação bilinear via ``RegularGridInterpolator``.
-        Pontos fora da mesa são clamped à borda mais próxima.
+        No mapa sintético "Cubo Central", avalia ``altura_cubo_central()``
+        analiticamente (sem interpolação, bordas do platô exatas).  No
+        GeoTIFF real, usa interpolação bilinear via
+        ``RegularGridInterpolator``.  Pontos fora da mesa são clamped à
+        borda mais próxima.
 
         Este método é compatível com a assinatura esperada por
         ``gerar_mapa_cores(funcao_mde=mde.obter_z_alvo)``.
@@ -311,16 +377,23 @@ class AdaptadorMDE:
         Returns
         -------
         z_alvo : float
-            Altura normalizada em metros, de 0 a ``altura_max_areia``.
+            Altura-alvo em metros, na faixa ``[-profundidade_caixa, 0.0]``.
         """
-        if not self._carregado or self._grade_normalizada is None:
+        if not self._carregado:
             return 0.0
 
         # Clamp para os limites da mesa
         x_c = max(0.0, min(x, self._largura_mesa))
         y_c = max(0.0, min(y, self._comprimento_mesa))
 
-        # Caminho rápido: interpolador disponível
+        # Cubo Central: avaliação analítica exata (sem interpolação)
+        if self._usando_sintetico:
+            return altura_cubo_central(x_c, y_c)
+
+        if self._grade_normalizada is None:
+            return 0.0
+
+        # Caminho rápido: interpolador disponível (GeoTIFF real)
         if self._interpolador is not None:
             return float(self._interpolador((y_c, x_c)))
 
@@ -331,6 +404,52 @@ class AdaptadorMDE:
         col = max(0, min(col, n_col - 1))
         lin = max(0, min(lin, n_lin - 1))
         return float(self._grade_normalizada[lin, col])
+
+    def obter_z_alvo_array(
+        self, xs: np.ndarray, ys: np.ndarray,
+    ) -> np.ndarray:
+        """Versão vetorizada de ``obter_z_alvo`` — consulta um array inteiro.
+
+        Usada por ``motor_caixao_areia.gerar_imagem_grade_cores`` (via o
+        parâmetro ``funcao_mde_vetorizada``) para classificar a grade
+        inteira em uma única chamada NumPy/SciPy, evitando o laço Python
+        célula-a-célula — importante para manter a taxa de quadros em
+        hardware de baixo custo.
+
+        Parameters
+        ----------
+        xs, ys : np.ndarray
+            Coordenadas X, Y na mesa (metros), mesma shape.
+
+        Returns
+        -------
+        np.ndarray
+            Alturas-alvo em metros, mesma shape que ``xs``.
+        """
+        if not self._carregado:
+            return np.zeros_like(np.asarray(xs, dtype=np.float64))
+
+        xs_c = np.clip(xs, 0.0, self._largura_mesa)
+        ys_c = np.clip(ys, 0.0, self._comprimento_mesa)
+
+        if self._usando_sintetico:
+            return np.asarray(altura_cubo_central(xs_c, ys_c), dtype=np.float64)
+
+        if self._interpolador is not None:
+            pontos = np.column_stack([ys_c.ravel(), xs_c.ravel()])
+            return self._interpolador(pontos).reshape(xs_c.shape)
+
+        # Fallback vetorizado nearest-neighbor (scipy não instalado)
+        n_lin, n_col = self._grade_normalizada.shape
+        col = np.clip(
+            np.round(xs_c / self._largura_mesa * (n_col - 1)).astype(np.int32),
+            0, n_col - 1,
+        )
+        lin = np.clip(
+            np.round(ys_c / self._comprimento_mesa * (n_lin - 1)).astype(np.int32),
+            0, n_lin - 1,
+        )
+        return self._grade_normalizada[lin, col]
 
     # ------------------------------------------------------------------ #
     # Visualização — heatmap do MDE
@@ -426,8 +545,8 @@ class AdaptadorMDE:
 
     @property
     def dimensoes_mesa(self) -> Tuple[float, float, float]:
-        """Retorna (largura_X, comprimento_Y, altura_Z) da mesa em metros."""
-        return (self._largura_mesa, self._comprimento_mesa, self._altura_max_areia)
+        """Retorna (largura_X, comprimento_Y, profundidade_caixa) em metros."""
+        return (self._largura_mesa, self._comprimento_mesa, self._profundidade_caixa)
 
     @property
     def elevacao_original(self) -> Tuple[float, float]:
@@ -447,6 +566,6 @@ class AdaptadorMDE:
             return (
                 f"AdaptadorMDE(grade={h}×{w}, "
                 f"mesa={self._largura_mesa:.2f}×{self._comprimento_mesa:.2f} m, "
-                f"z_max={self._altura_max_areia:.3f} m)"
+                f"z∈[-{self._profundidade_caixa:.3f}, 0.000] m)"
             )
         return "AdaptadorMDE(não carregado)"

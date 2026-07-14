@@ -21,10 +21,13 @@ Pipeline Matemático
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import numpy as np
 import cv2
 
-from typing import Tuple, Optional, Callable, List
+from typing import Tuple, Optional, Callable, List, Union
 
 # ============================================================================
 # Tipo auxiliar
@@ -206,6 +209,78 @@ def ajustar_plano_ransac(
 
 
 # ============================================================================
+# 1b. BACK-PROJECTION PINHOLE — Profundidade → Nuvem 3D (convenção da mesa)
+# ============================================================================
+
+def profundidade_para_nuvem_mesa(
+    profundidade_mm: np.ndarray,
+    fx: float,
+    fy: float,
+    cx: float,
+    cy: float,
+    alcance_min: float = 0.3,
+    alcance_max: float = 4.5,
+) -> np.ndarray:
+    """Converte um mapa de profundidade bruto em nuvem 3D já na convenção
+    de sinal usada pela mesa (Z maior = mais próximo do sensor).
+
+    O SDK do Kinect mede **profundidade** — a distância do sensor até a
+    superfície — que **aumenta** à medida que o ponto fica mais **longe**
+    do sensor (mais fundo na caixa).  Já a convenção adotada para
+    ``Z_mesa`` (ver módulo ``kinect_sensor``) é o oposto: ``Z_mesa = 0``
+    no nível da tampa (ponto mais **próximo** do sensor) e valores mais
+    **negativos** conforme a areia se afasta do sensor (mais funda).
+
+    Se essa inversão de sinal não fosse feita aqui, o pipeline de ajuste
+    de plano (SVD + Gram-Schmidt), que por convenção geral atribui Z
+    **crescente** a pontos que se afastam do centroide ao longo da
+    normal, produziria ``Z_mesa`` **positivo** para a areia (mais longe
+    do sensor do que a tampa) — o oposto da faixa física exigida
+    ``[-profundidade_caixa, 0.0]``.  A correção é aplicada apenas na
+    componente Z de saída; X e Y usam a profundidade **verdadeira**
+    (positiva) na razão de back-projection pinhole, preservando a
+    geometria correta do plano imagem:
+
+    .. math::
+
+        X = (u - c_x) \\cdot Z_{real} / f_x, \\qquad
+        Y = (v - c_y) \\cdot Z_{real} / f_y, \\qquad
+        Z_{mesa} = -Z_{real}
+
+    Parameters
+    ----------
+    profundidade_mm : np.ndarray, shape (H, W)
+        Mapa de profundidade bruto do sensor, em milímetros.
+    fx, fy, cx, cy : float
+        Parâmetros intrínsecos do sensor (ver ``kinect_sensor.KinectSensor.intrinsicos``).
+    alcance_min, alcance_max : float
+        Faixa válida de profundidade **verdadeira** (metros) — pixels
+        fora dela (sem retorno, ou além do alcance do sensor) são
+        descartados.
+
+    Returns
+    -------
+    np.ndarray, shape (N, 3), dtype float64
+        Pontos ``[X, Y, Z_mesa]`` em metros, prontos para
+        ``pipeline_plano_e_base`` / ``transformar_pontos``.
+    """
+    h, w = profundidade_mm.shape
+    v_idx, u_idx = np.indices((h, w))
+
+    Z_real = profundidade_mm.astype(np.float64) / 1000.0  # profundidade verdadeira (m)
+    mascara = (Z_real > alcance_min) & (Z_real < alcance_max)
+
+    Z_m = Z_real[mascara]
+    u_m = u_idx[mascara].astype(np.float64)
+    v_m = v_idx[mascara].astype(np.float64)
+
+    X_m = (u_m - cx) * Z_m / fx
+    Y_m = (v_m - cy) * Z_m / fy
+
+    return np.column_stack([X_m, Y_m, -Z_m])
+
+
+# ============================================================================
 # 2. SISTEMA DE COORDENADAS — Kinect → Mesa (Gram-Schmidt)
 # ============================================================================
 
@@ -325,6 +400,70 @@ def transformar_pontos(T: np.ndarray, pontos: np.ndarray) -> np.ndarray:
     homogeneos = np.hstack([pontos, np.ones((N, 1))])   # (N, 4)
     transformados = (T @ homogeneos.T).T                 # (N, 4)
     return transformados[:, :3]
+
+
+# ============================================================================
+# 2b. PERSISTÊNCIA DA CALIBRAÇÃO — Cache JSON (calibration_data.json)
+# ============================================================================
+
+def salvar_matriz_calibracao(
+    T: np.ndarray,
+    caminho: Union[str, Path] = "calibration_data.json",
+) -> None:
+    """Salva a matriz de transformação 4×4 ``T_final`` em um arquivo JSON.
+
+    A calibração da tampa (Passos 1 e 2) é cara e deve ser feita apenas
+    uma vez; este cache evita repeti-la a cada execução do sistema.
+
+    Parameters
+    ----------
+    T : np.ndarray, shape (4, 4)
+        Matriz de transformação afim Kinect → Mesa (``T_final``).
+    caminho : str | Path
+        Caminho do arquivo JSON de destino.
+
+    Raises
+    ------
+    ValueError
+        Se ``T`` não tiver shape (4, 4).
+    """
+    if T.shape != (4, 4):
+        raise ValueError(f"T_final deve ter shape (4, 4), recebido {T.shape}")
+
+    dados = {"T_final": T.tolist()}
+    Path(caminho).write_text(json.dumps(dados, indent=2), encoding="utf-8")
+
+
+def carregar_matriz_calibracao(
+    caminho: Union[str, Path] = "calibration_data.json",
+) -> Optional[np.ndarray]:
+    """Carrega a matriz ``T_final`` de um arquivo JSON de cache, se existir.
+
+    Parameters
+    ----------
+    caminho : str | Path
+        Caminho do arquivo JSON de origem.
+
+    Returns
+    -------
+    np.ndarray, shape (4, 4) | None
+        A matriz de calibração, ou ``None`` se o arquivo não existir ou
+        estiver corrompido/incompleto (nesse caso, o chamador deve
+        recalibrar em vez de propagar a exceção).
+    """
+    caminho = Path(caminho)
+    if not caminho.is_file():
+        return None
+
+    try:
+        dados = json.loads(caminho.read_text(encoding="utf-8"))
+        T = np.array(dados["T_final"], dtype=np.float64)
+    except (json.JSONDecodeError, KeyError, ValueError, TypeError):
+        return None
+
+    if T.shape != (4, 4):
+        return None
+    return T
 
 
 # ============================================================================
@@ -578,6 +717,42 @@ def cor_por_diferenca(
         return COR_VERDE
 
 
+def cor_por_diferenca_vetorizado(
+    z_real: np.ndarray,
+    z_mde: np.ndarray,
+    tolerancia: float = 0.02,
+) -> np.ndarray:
+    """Versão vetorizada de ``cor_por_diferenca`` — classifica um array inteiro.
+
+    Evita o loop Python por célula ao classificar toda a grade de uma vez,
+    o que é significativamente mais rápido em hardware modesto.
+
+    Parameters
+    ----------
+    z_real : np.ndarray, shape (...,)
+        Alturas reais medidas (metros), qualquer shape.
+    z_mde : np.ndarray, shape (...,)
+        Alturas alvo do MDE (metros), mesmo shape que ``z_real``.
+    tolerancia : float
+        Tolerância em metros (padrão: 0.02 m = 2 cm).
+
+    Returns
+    -------
+    cores : np.ndarray, shape (..., 3), dtype uint8
+        Cor BGR por elemento: Vermelho (cavar), Azul (preencher) ou
+        Verde (OK), seguindo a mesma regra estrita de ``cor_por_diferenca``.
+    """
+    z_real = np.asarray(z_real, dtype=np.float64)
+    z_mde = np.asarray(z_mde, dtype=np.float64)
+
+    diff = z_real - z_mde
+    cores = np.empty(diff.shape + (3,), dtype=np.uint8)
+    cores[...] = (0, 255, 0)                       # Verde (padrão)
+    cores[diff > tolerancia] = (0, 0, 255)         # Vermelho — cavar
+    cores[diff < -tolerancia] = (255, 0, 0)        # Azul — preencher
+    return cores
+
+
 def gerar_mapa_cores(
     pontos_mesa: np.ndarray,
     funcao_mde: Callable[[float, float], float] = ler_mde_placeholder,
@@ -696,6 +871,7 @@ def gerar_imagem_grade_cores(
     camera_matrix: np.ndarray,
     dist_coeffs: np.ndarray,
     resolucao: Tuple[int, int],
+    funcao_mde_vetorizada: Optional[Callable[[np.ndarray, np.ndarray], np.ndarray]] = None,
 ) -> np.ndarray:
     """Gera a imagem AR usando discretização em malha de quadrados coloridos.
 
@@ -743,6 +919,13 @@ def gerar_imagem_grade_cores(
         Coeficientes de distorção.
     resolucao : tuple[int, int]
         ``(largura, altura)`` em pixels da imagem de saída.
+    funcao_mde_vetorizada : Callable[[np.ndarray, np.ndarray], np.ndarray] | None
+        Variante vetorizada de ``funcao_mde`` que recebe arrays ``xs, ys``
+        (mesma shape) e retorna ``Z_mde`` para todas as células de uma só
+        vez.  Quando fornecida, substitui o loop escalar célula-a-célula
+        por uma única chamada NumPy — essencial para manter a taxa de
+        quadros em hardware modesto.  Se ``None``, cai no caminho escalar
+        (compatível com qualquer ``funcao_mde``).
 
     Returns
     -------
@@ -780,22 +963,35 @@ def gerar_imagem_grade_cores(
         n_celulas_y + 1, n_celulas_x + 1, 2
     )  # indexável por [lin, col]
 
-    # ── 3. Coloração e rasterização por célula ──
+    # ── 3. Coloração vetorizada da grade inteira ──
+    # Centros de célula, shape (n_celulas_y, n_celulas_x)
+    x_centros = (np.arange(n_celulas_x) + 0.5) * tam_celula_x
+    y_centros = (np.arange(n_celulas_y) + 0.5) * tam_celula_y
+    xx_centro, yy_centro = np.meshgrid(x_centros, y_centros)
+
+    if funcao_mde_vetorizada is not None:
+        z_mde_grade = np.asarray(
+            funcao_mde_vetorizada(xx_centro, yy_centro), dtype=np.float64
+        )
+    else:
+        # Caminho escalar de compatibilidade: consulta célula a célula,
+        # mas apenas onde há dados do Kinect (evita chamadas inúteis).
+        z_mde_grade = np.zeros((n_celulas_y, n_celulas_x), dtype=np.float64)
+        for i in range(n_celulas_y):
+            for j in range(n_celulas_x):
+                if contagens[i, j] > 0:
+                    z_mde_grade[i, j] = funcao_mde(
+                        float(xx_centro[i, j]), float(yy_centro[i, j])
+                    )
+
+    cores_grade = cor_por_diferenca_vetorizado(alturas, z_mde_grade, tolerancia)
+
+    # ── 4. Rasterização — um fillPoly por célula com dados ──
     for i in range(n_celulas_y):
         for j in range(n_celulas_x):
             if contagens[i, j] == 0:
                 continue  # sem dados do Kinect nesta célula
 
-            z_real_media = float(alturas[i, j])
-
-            # Centro da célula para consulta ao MDE
-            x_centro = (j + 0.5) * tam_celula_x
-            y_centro = (i + 0.5) * tam_celula_y
-            z_mde = funcao_mde(x_centro, y_centro)
-
-            cor = cor_por_diferenca(z_real_media, z_mde, tolerancia)
-
-            # 4 cantos da célula já projetados em 2D
             pts = np.array([
                 vertices_2d[i,     j    ],
                 vertices_2d[i,     j + 1],
@@ -803,6 +999,7 @@ def gerar_imagem_grade_cores(
                 vertices_2d[i + 1, j    ],
             ], dtype=np.int32).reshape((-1, 1, 2))
 
+            cor = tuple(int(c) for c in cores_grade[i, j])
             cv2.fillPoly(imagem, [pts], cor)
 
     return imagem
@@ -815,14 +1012,39 @@ def gerar_imagem_grade_cores(
 def pipeline_plano_e_base(
     pontos: np.ndarray,
     semente: Optional[np.ndarray] = None,
+    usar_ransac: bool = False,
 ) -> Tuple[np.ndarray, float, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Executa os Passos 1 e 2 de uma só vez (ajuste de plano + base + matriz).
+
+    A calibração oficial do sistema (Seção "Lid Calibration") é feita **uma
+    única vez**, com a tampa lisa e plana colocada sobre toda a área do
+    caixão de areia.  Como a tampa cobre 100% do campo de visão do sensor,
+    a nuvem capturada não contém outliers (paredes, areia irregular, etc.)
+    — todo ponto pertence ao mesmo plano físico.  Nessas condições, o ajuste
+    de mínimos quadráticos via SVD (``ajustar_plano_svd``) já é ótimo e
+    numericamente estável, dispensando o custo extra do RANSAC.  Usar RANSAC
+    aqui apenas reintroduziria variância (amostragem aleatória) sem nenhum
+    outlier para filtrar — por isso o padrão é SVD puro.
+
+    Parameters
+    ----------
+    pontos : np.ndarray, shape (N, 3)
+        Nuvem de pontos da tampa plana (referencial do sensor).
+    semente : np.ndarray | None
+        Vetor semente para o Gram-Schmidt (ver ``construir_base_mesa``).
+    usar_ransac : bool
+        Se ``True``, filtra outliers com RANSAC antes do SVD
+        (``ajustar_plano_ransac``).  Útil apenas para cenas com objetos
+        espúrios; não é necessário para a calibração com tampa.
 
     Returns
     -------
     normal, d, centroide, X_mesa, Y_mesa, Z_mesa, T
     """
-    normal, d, centroide = ajustar_plano_ransac(pontos)
+    if usar_ransac:
+        normal, d, centroide = ajustar_plano_ransac(pontos)
+    else:
+        normal, d, centroide = ajustar_plano_svd(pontos)
     X_mesa, Y_mesa, Z_mesa = construir_base_mesa(normal, semente)
     T = montar_matriz_transformacao(X_mesa, Y_mesa, Z_mesa, centroide)
     return normal, d, centroide, X_mesa, Y_mesa, Z_mesa, T

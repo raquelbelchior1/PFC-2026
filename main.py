@@ -8,24 +8,43 @@ Areia com Realidade Aumentada.  Funciona com ou sem Kinect conectado.
 
 Dimensões físicas reais
 -----------------------
-- Caixa de areia: 1,5 m × 1,5 m × 0,3 m de profundidade
+- Caixa de areia: 1,5 m × 1,5 m × 0,20 m de profundidade
 - Kinect montado a 2,5 m de altura
+- Areia: Z_mesa ∈ [-0,20 m, 0,0 m] (0,0 m = nível da tampa)
 
 Janelas de saída
 ----------------
 - **Projecao_Areia** — feedback AR do projetor (vermelho/azul/verde)
 - **Gabarito_MDE** — heatmap de referência do MDE sendo replicado
 
+Calibração da Tampa ("Lid Calibration")
+----------------------------------------
+Para evitar degeneração numérica do SVD e ruído de sensor, a calibração
+da mesa é feita **uma única vez**, com uma **tampa lisa e plana** colocada
+sobre toda a área do caixão — representando o plano de referência
+``Z_mesa = 0.0 m`` (nível máximo possível de areia).  Com a tampa
+removida, a areia ocupa sempre a faixa ``[-0.20 m, 0.0 m]``
+(fundo físico → nível da tampa).
+
+O resultado da calibração (matriz ``T_final`` 4×4) é salvo em
+``calibration_data.json``.  Na próxima execução, esse arquivo é
+carregado automaticamente e a calibração manual é **pulada** — a
+tecla **C** permanece disponível a qualquer momento para recalibrar
+(por exemplo, se o sensor for reposicionado).
+
 Máquina de Estados
 ------------------
 INIT
     Inicializa o sensor (``KinectSensor`` com fallback), carrega o MDE
-    (com fallback para superfície sintética) e transiciona para IDLE.
+    (com fallback para superfície sintética) e tenta carregar
+    ``calibration_data.json``.  Se encontrado, pula direto para
+    AR_LOOP; caso contrário, transiciona para IDLE.
 IDLE
     Exibe o mapa de profundidade colorido enquanto aguarda o comando
     de calibração.  Tecla **C** → transiciona para CALIBRACAO.
 CALIBRACAO
-    Captura nuvem de pontos → SVD → Gram-Schmidt → Matriz 4×4.
+    Captura a nuvem de pontos da tampa plana → SVD → Gram-Schmidt →
+    Matriz 4×4 (``T_final``) → salva em ``calibration_data.json``.
     Ao concluir, transiciona automaticamente para AR_LOOP.
 AR_LOOP
     Loop contínuo: captura → transforma → compara MDE → colore → projeta.
@@ -64,6 +83,8 @@ from motor_caixao_areia import (
     encontrar_cantos_tabuleiro,
     calibrar_projetor,
     gerar_imagem_grade_cores,
+    salvar_matriz_calibracao,
+    carregar_matriz_calibracao,
 )
 
 # ── Adaptador MDE ────────────────────────────────────────────────────
@@ -93,13 +114,19 @@ COMPRIMENTO_MESA: float = 0.48
 """1.50"""
 """Dimensão Y da caixa de areia em metros (1,5 m)."""
 
-ALTURA_MAX_AREIA: float = 0.08
-"""0.30"""
-"""Espessura máxima de areia mapeável em metros (30 cm)."""
+PROFUNDIDADE_CAIXA: float = 0.20
+"""Profundidade física do caixão em metros (20 cm), fixada pela
+especificação: a areia ocupa sempre Z_mesa ∈ [-0.20 m, 0.0 m], onde
+0.0 m é o nível da tampa de calibração (topo) e -0.20 m é o fundo."""
 
 ALTURA_KINECT: float = 0.6
 """2.50"""
-"""Altura de montagem do Kinect acima da mesa, em metros."""
+"""Altura de montagem do Kinect acima do nível da tampa (Z_mesa = 0),
+em metros."""
+
+CAMINHO_CALIBRACAO: str = "calibration_data.json"
+"""Cache local da matriz de calibração T_final (4×4).  Carregado
+automaticamente no início; recriado sempre que a tecla [C] é usada."""
 
 CELULAS_GRADE_X: int = 30
 """Número de colunas da grade de discretização (eixo X).
@@ -275,12 +302,91 @@ def _callback_mouse(evento: int, x_pixel: int, y_pixel: int,
 # Funções auxiliares do pipeline
 # =====================================================================
 
-def _executar_calibracao(sensor: KinectSensor) -> DadosCalibracao:
-    """Captura a nuvem atual e calcula plano + base + matriz T.
+def _calcular_parametros_projecao(
+    resolucao: tuple[int, int],
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Calcula os parâmetros do modelo de câmera (Tsai) do projetor.
 
-    No modo simulação, os pontos já estão em coordenadas da mesa,
-    então T = identidade e os parâmetros de projeção são calculados
-    para mapear [0, 1.5] m × [0, 1.5] m → pixels da imagem.
+    Mapeia a mesa lógica ``[0, LARGURA_MESA] × [0, COMPRIMENTO_MESA]``
+    (com ``Z = 0`` no plano da tampa) para a janela do projetor,
+    usando uma câmera virtual olhando de cima (``rvec = 0``) a uma
+    distância fixa ``d_cam``.  Esses parâmetros dependem apenas das
+    dimensões da mesa e da resolução do projetor — são os mesmos tanto
+    para uma calibração recém-feita quanto para uma carregada do cache.
+
+    Parameters
+    ----------
+    resolucao : tuple[int, int]
+        ``(largura, altura)`` em pixels da janela do projetor.
+
+    Returns
+    -------
+    camera_matrix, dist_coeffs, rvec, tvec
+    """
+    largura, altura = resolucao
+    d_cam = 10.0  # distância virtual da câmera (metros)
+    fx = largura * d_cam / LARGURA_MESA
+    fy = altura * d_cam / COMPRIMENTO_MESA
+    camera_matrix = np.array([
+        [fx,  0.0, 0.0],
+        [0.0, fy,  0.0],
+        [0.0, 0.0, 1.0],
+    ])
+    dist_coeffs = np.zeros(5)
+    rvec = np.zeros((3, 1))
+    tvec = np.array([[0.0], [0.0], [d_cam]])
+    return camera_matrix, dist_coeffs, rvec, tvec
+
+
+def _tentar_carregar_calibracao_cache() -> Optional[DadosCalibracao]:
+    """Tenta carregar ``T_final`` de ``calibration_data.json``.
+
+    Se o cache existir e for válido, a calibração manual (Passos 1 e 2)
+    é pulada — a mesa já foi calibrada com a tampa em uma execução
+    anterior e a matriz permanece válida enquanto o sensor não for
+    reposicionado.
+
+    Returns
+    -------
+    DadosCalibracao | None
+        Objeto pronto para uso (``T`` + parâmetros de projeção), ou
+        ``None`` se nenhum cache válido foi encontrado.
+    """
+    T = carregar_matriz_calibracao(CAMINHO_CALIBRACAO)
+    if T is None:
+        return None
+
+    dados = DadosCalibracao()
+    dados.T = T
+    dados.camera_matrix, dados.dist_coeffs, dados.rvec, dados.tvec = (
+        _calcular_parametros_projecao(RESOLUCAO_PROJETOR)
+    )
+
+    print(f"[Calibração] ✓ Cache carregado de '{CAMINHO_CALIBRACAO}' "
+          "— calibração manual pulada.")
+    print("[Calibração]   Pressione [C] a qualquer momento para recalibrar.")
+    return dados
+
+
+def _executar_calibracao(sensor: KinectSensor) -> DadosCalibracao:
+    """Calibração da Tampa ("Lid Calibration") — captura + SVD + Gram-Schmidt.
+
+    Executada **uma única vez** com uma tampa lisa e plana cobrindo toda
+    a área do caixão, representando o plano de referência
+    ``Z_mesa = 0.0 m``.  Como a tampa ocupa 100% do campo de visão do
+    sensor, a nuvem capturada não contém outliers — o ajuste de plano
+    usa SVD puro (``pipeline_plano_e_base``, sem RANSAC), evitando a
+    variância extra de uma amostragem aleatória desnecessária.
+
+    Ao final, a matriz resultante (``T_final``) é persistida em
+    ``calibration_data.json`` via ``salvar_matriz_calibracao`` — a
+    próxima execução carrega esse cache automaticamente
+    (``_tentar_carregar_calibracao_cache``), pulando a calibração manual.
+
+    No modo simulação, os pontos já estão em coordenadas da mesa
+    (não há sensor físico nem tampa real), então ``T = identidade`` e
+    os parâmetros de projeção são calculados para mapear
+    ``[0, LARGURA_MESA] × [0, COMPRIMENTO_MESA]`` → pixels da imagem.
 
     Parameters
     ----------
@@ -300,86 +406,70 @@ def _executar_calibracao(sensor: KinectSensor) -> DadosCalibracao:
     dados = DadosCalibracao()
 
     print("\n" + "=" * 50)
-    print("  CALIBRAÇÃO — Passos 1 e 2 (SVD + Gram-Schmidt)")
+    print("  CALIBRAÇÃO DA TAMPA — SVD + Gram-Schmidt")
     print("=" * 50)
 
     # ── Modo Simulação: pontos já em coordenadas da mesa ──
     if sensor.esta_simulando:
         dados.T = np.eye(4)
         dados.normal = np.array([0.0, 0.0, 1.0])
-        dados.centroide = np.array([0.75, 0.75, 0.15])
-
-        # Projeção: mapear mesa [0, L] × [0, C] → pixels do projetor
-        largura, altura = RESOLUCAO_PROJETOR
-        d_cam = 10.0  # distância virtual da câmera (metros)
-        fx = largura * d_cam / LARGURA_MESA
-        fy = altura * d_cam / COMPRIMENTO_MESA
-        dados.camera_matrix = np.array([
-            [fx,  0.0, 0.0],
-            [0.0, fy,  0.0],
-            [0.0, 0.0, 1.0],
-        ])
-        dados.dist_coeffs = np.zeros(5)
-        dados.rvec = np.zeros((3, 1))
-        dados.tvec = np.array([[0.0], [0.0], [d_cam]])
+        # Z = 0.0 (nível da tampa) — não há sensor físico para capturar
+        # a tampa real, então assume-se a mesa já calibrada na origem.
+        dados.centroide = np.array([LARGURA_MESA / 2.0, COMPRIMENTO_MESA / 2.0, 0.0])
+        dados.camera_matrix, dados.dist_coeffs, dados.rvec, dados.tvec = (
+            _calcular_parametros_projecao(RESOLUCAO_PROJETOR)
+        )
 
         print("  Modo Simulação — calibração automática.")
-        print("  T = Identidade (pontos já em coordenadas da mesa).")
-        print(f"  Projeção: fx={fx:.1f}, fy={fy:.1f}, d={d_cam:.1f} m")
+        print("  T = Identidade (pontos já em coordenadas da mesa, Z=0 na tampa).")
+        print(f"  Projeção: fx={dados.camera_matrix[0,0]:.1f}, "
+              f"fy={dados.camera_matrix[1,1]:.1f}")
         print("  ✓ Calibração concluída (simulação).")
         print("=" * 50 + "\n")
+        salvar_matriz_calibracao(dados.T, CAMINHO_CALIBRACAO)
         return dados
 
-    # ── Modo Real: SVD + Gram-Schmidt ──
+    # ── Modo Real: captura da tampa plana → SVD → Gram-Schmidt ──
     pontos = sensor.capturar_nuvem()
     if pontos.shape[0] < 10:
         raise RuntimeError(
-            "Nuvem com poucos pontos — verifique a posição do sensor."
+            "Nuvem com poucos pontos — verifique se a tampa está bem "
+            "posicionada e visível ao sensor."
         )
-    print(f"  Pontos capturados: {pontos.shape[0]:,}")
+    print(f"  Pontos capturados (tampa): {pontos.shape[0]:,}")
 
     normal, d, centroide, X, Y, Z, T = pipeline_plano_e_base(pontos)
 
-    # T leva o centroide do plano para a origem (0, 0, 0) no referencial
-    # da mesa.  Mas a nossa convenção de mesa é [0, L] × [0, C], com a
-    # origem em um canto.  Portanto, deslocamos T por (+L/2, +C/2) para
-    # que o centroide do plano (centro físico da mesa, sob o Kinect)
-    # caia no centro lógico da mesa (L/2, C/2).  Sem este deslocamento,
-    # metade dos pontos teria coordenadas negativas e seria colapsada
-    # na coluna 0 / linha 0 da grade de discretização.
+    # T leva o centroide do plano da tampa para a origem (0, 0, 0) no
+    # referencial da mesa (Z=0 já corresponde ao nível da tampa). Mas a
+    # nossa convenção de mesa é [0, L] × [0, C], com a origem em um
+    # canto.  Portanto, deslocamos T por (+L/2, +C/2) — apenas em X, Y —
+    # para que o centro físico da tampa (sob o Kinect) caia no centro
+    # lógico da mesa (L/2, C/2).  Sem este deslocamento, metade dos
+    # pontos teria coordenadas negativas e seria colapsada na coluna 0 /
+    # linha 0 da grade de discretização.
     T_shift = np.eye(4)
     T_shift[0, 3] = LARGURA_MESA / 2.0
     T_shift[1, 3] = COMPRIMENTO_MESA / 2.0
-    T = T_shift @ T
+    T_final = T_shift @ T
 
-    dados.T = T
+    dados.T = T_final
     dados.normal = normal
     dados.centroide = centroide
+    dados.camera_matrix, dados.dist_coeffs, dados.rvec, dados.tvec = (
+        _calcular_parametros_projecao(RESOLUCAO_PROJETOR)
+    )
 
-    # Configurar projeção real para mapear a mesa [0, L] × [0, C] na
-    # janela do projetor (mesma estratégia da simulação).  Sem isto,
-    # os defaults mock (fx=500, cx=320, tvec=[0,0,1]) projetariam a
-    # mesa em um sub-retângulo da imagem.
-    largura, altura = RESOLUCAO_PROJETOR
-    d_cam = 10.0
-    fx = largura * d_cam / LARGURA_MESA
-    fy = altura * d_cam / COMPRIMENTO_MESA
-    dados.camera_matrix = np.array([
-        [fx,  0.0, 0.0],
-        [0.0, fy,  0.0],
-        [0.0, 0.0, 1.0],
-    ])
-    dados.dist_coeffs = np.zeros(5)
-    dados.rvec = np.zeros((3, 1))
-    dados.tvec = np.array([[0.0], [0.0], [d_cam]])
-
-    print(f"  Plano: {normal[0]:.4f}x + {normal[1]:.4f}y "
+    print(f"  Plano da tampa: {normal[0]:.4f}x + {normal[1]:.4f}y "
           f"+ {normal[2]:.4f}z + {d:.2f} = 0")
-    print(f"  Centroide: ({centroide[0]:.1f}, {centroide[1]:.1f}, {centroide[2]:.1f})")
+    print(f"  Centroide: ({centroide[0]:.3f}, {centroide[1]:.3f}, {centroide[2]:.3f})")
     print(f"  Mesa lógica: [0, {LARGURA_MESA:.2f}] × [0, {COMPRIMENTO_MESA:.2f}] m "
-          f"(centroide → centro)")
-    print(f"  Projeção: fx={fx:.1f}, fy={fy:.1f}, d={d_cam:.1f} m")
+          f"(centroide da tampa → centro, Z=0 na tampa)")
+    print(f"  Areia (após remover a tampa): Z_mesa ∈ [-{PROFUNDIDADE_CAIXA:.2f}, 0.00] m")
     print("  ✓ Calibração concluída.")
+
+    salvar_matriz_calibracao(dados.T, CAMINHO_CALIBRACAO)
+    print(f"  ✓ T_final salvo em '{CAMINHO_CALIBRACAO}'.")
     print("=" * 50 + "\n")
 
     return dados
@@ -439,9 +529,12 @@ def _processar_frame_ar(
     pontos_mesa = transformar_pontos(calibracao.T, pontos)
 
     # 3–6. Grade discretizada → imagem contínua de quadrados coloridos
+    # (funcao_mde_vetorizada evita o laço Python célula-a-célula na
+    # consulta ao MDE, importante para hardware modesto)
     imagem = gerar_imagem_grade_cores(
         pontos_mesa=pontos_mesa,
         funcao_mde=mde.obter_z_alvo,
+        funcao_mde_vetorizada=mde.obter_z_alvo_array,
         tolerancia=tolerancia,
         n_celulas_x=CELULAS_GRADE_X,
         n_celulas_y=CELULAS_GRADE_Y,
@@ -469,7 +562,7 @@ def _abrir_gui_configuracao() -> Optional[dict]:
     -------
     dict | None
         Dicionário com ``caminho_geotiff``, ``largura_mesa``,
-        ``comprimento_mesa`` e ``altura_max_areia``.
+        ``comprimento_mesa`` e ``profundidade_caixa``.
         ``None`` se o usuário fechou a janela sem iniciar.
     """
     resultado: dict = {}
@@ -482,7 +575,7 @@ def _abrir_gui_configuracao() -> Optional[dict]:
     var_caminho = tk.StringVar(value="")
     var_largura = tk.StringVar(value="1.50")
     var_comprimento = tk.StringVar(value="1.50")
-    var_altura = tk.StringVar(value="0.30")
+    var_altura = tk.StringVar(value="0.20")
     var_demo = tk.BooleanVar(value=False)
 
     # ── Título ──
@@ -548,7 +641,7 @@ def _abrir_gui_configuracao() -> Optional[dict]:
         if var_demo.get():
             btn_mapa.config(state="disabled")
             lbl_caminho.config(
-                text="Modo demonstração — Morro Gaussiano sintético",
+                text="Modo demonstração — Cubo Central sintético",
                 fg="#2e7d32",
             )
             btn_iniciar.config(state="normal")
@@ -584,7 +677,7 @@ def _abrir_gui_configuracao() -> Optional[dict]:
     for i, (rotulo, var) in enumerate([
         ("Largura (X):", var_largura),
         ("Comprimento (Y):", var_comprimento),
-        ("Altura Máx. Areia (Z):", var_altura),
+        ("Profundidade da Caixa (Z):", var_altura),
     ]):
         tk.Label(
             frame_mesa, text=rotulo, font=("Segoe UI", 10),
@@ -622,7 +715,7 @@ def _abrir_gui_configuracao() -> Optional[dict]:
         )
         resultado["largura_mesa"] = largura
         resultado["comprimento_mesa"] = comprimento
-        resultado["altura_max_areia"] = altura
+        resultado["profundidade_caixa"] = altura
         root.destroy()
 
     btn_iniciar = tk.Button(
@@ -669,18 +762,19 @@ def main() -> None:
         print("\n✓ Operação cancelada pelo usuário.")
         sys.exit(0)
 
-    global CAMINHO_GEOTIFF, LARGURA_MESA, COMPRIMENTO_MESA, ALTURA_MAX_AREIA
+    global CAMINHO_GEOTIFF, LARGURA_MESA, COMPRIMENTO_MESA, PROFUNDIDADE_CAIXA
     CAMINHO_GEOTIFF = config["caminho_geotiff"]
     LARGURA_MESA = config["largura_mesa"]
     COMPRIMENTO_MESA = config["comprimento_mesa"]
-    ALTURA_MAX_AREIA = config["altura_max_areia"]
+    PROFUNDIDADE_CAIXA = config["profundidade_caixa"]
 
     print()
     print("╔══════════════════════════════════════════════════╗")
     print("║     CAIXÃO DE AREIA — AR Sandbox                ║")
     print("║     PFC Engenharia de Computação — AMAN 2026    ║")
-    print(f"║     Mesa: {LARGURA_MESA} m × {COMPRIMENTO_MESA} m × {ALTURA_MAX_AREIA} m")
-    print("║     Kinect: 2.5 m de altura                     ║")
+    print(f"║     Mesa: {LARGURA_MESA} m × {COMPRIMENTO_MESA} m × {PROFUNDIDADE_CAIXA} m")
+    print(f"║     Kinect: {ALTURA_KINECT} m de altura                     ║")
+    print(f"║     Faixa Z_mesa: [-{PROFUNDIDADE_CAIXA:.2f}, 0.00] m         ║")
     print("╚══════════════════════════════════════════════════╝")
     print()
 
@@ -705,19 +799,20 @@ def main() -> None:
                     forcar_simulacao=FORCAR_SIMULACAO,
                     largura_mesa=LARGURA_MESA,
                     comprimento_mesa=COMPRIMENTO_MESA,
-                    altura_max_areia=ALTURA_MAX_AREIA,
+                    profundidade_caixa=PROFUNDIDADE_CAIXA,
+                    altura_kinect=ALTURA_KINECT,
                 )
             except Exception as e:
                 logger.error("Falha crítica ao criar KinectSensor: %s", e)
                 print(f"[ERRO FATAL] Não foi possível iniciar o sensor: {e}")
                 sys.exit(1)
 
-            # MDE (com fallback para superfície sintética)
+            # MDE (com fallback para o mapa sintético "Cubo Central")
             mde = AdaptadorMDE(
                 caminho_geotiff=CAMINHO_GEOTIFF,
                 largura_mesa=LARGURA_MESA,
                 comprimento_mesa=COMPRIMENTO_MESA,
-                altura_max_areia=ALTURA_MAX_AREIA,
+                profundidade_caixa=PROFUNDIDADE_CAIXA,
             )
 
             # Gerar heatmap do MDE (exibido na janela Gabarito)
@@ -743,7 +838,7 @@ def main() -> None:
             print(f"  [{JANELA_GABARITO}] Heatmap de referência do MDE")
             print()
             print("Teclas:")
-            print("  [C] Calibrar plano da mesa (SVD + Gram-Schmidt)")
+            print("  [C] Calibrar com a tampa plana (SVD + Gram-Schmidt)")
             print("  [F] Tela cheia ON/OFF (janela de projeção)")
             print("  [Q] ou [ESC] Encerrar")
             if sensor.esta_simulando:
@@ -752,7 +847,12 @@ def main() -> None:
                 print("  [Botão Esquerdo + Arrastar] Cavar areia")
                 print("  [Botão Direito  + Arrastar] Colocar areia")
             print()
-            estado = Estado.IDLE
+
+            # Tentar carregar calibração de execuções anteriores — se
+            # encontrada, pula direto para AR_LOOP (a tecla [C] continua
+            # disponível a qualquer momento para recalibrar).
+            calibracao = _tentar_carregar_calibracao_cache()
+            estado = Estado.AR_LOOP if calibracao is not None else Estado.IDLE
 
         # ── IDLE ──────────────────────────────────────────
         elif estado == Estado.IDLE:
@@ -763,10 +863,10 @@ def main() -> None:
             # Overlay de instrução
             cv2.putText(
                 imagem,
-                "Aperte [C] para calibrar",
+                "Posicione a tampa plana e aperte [C] para calibrar",
                 (20, 40),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                0.8,
+                0.7,
                 (255, 255, 255),
                 2,
             )

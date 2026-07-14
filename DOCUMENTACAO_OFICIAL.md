@@ -40,14 +40,30 @@ Na ausência de hardware físico, o sistema oferece um **emulador interativo** q
 |---|---|---|
 | Dimensão X (largura) | 1,50 m | `LARGURA_MESA` |
 | Dimensão Y (comprimento) | 1,50 m | `COMPRIMENTO_MESA` |
-| Profundidade máxima de areia | 0,30 m (30 cm) | `ALTURA_MAX_AREIA` |
-| Altura do Kinect (montagem) | 2,50 m | `ALTURA_KINECT` |
+| Profundidade física do caixão | 0,20 m (20 cm) | `PROFUNDIDADE_CAIXA` |
+| Altura do Kinect (montagem, acima da tampa) | 2,50 m | `ALTURA_KINECT` |
 | Tolerância para cor verde | 0,02 m (2 cm) | `TOLERANCIA_COR` |
+| Cache da calibração | `calibration_data.json` | `CAMINHO_CALIBRACAO` |
 | Células da grade (eixo X) | 30 | `CELULAS_GRADE_X` |
 | Células da grade (eixo Y) | 30 | `CELULAS_GRADE_Y` |
 | Tamanho de cada célula | 5 cm × 5 cm | derivado |
 | Raio da pá virtual (mouse) | 0,10 m (10 cm) | `RAIO_PA_VIRTUAL` |
 | Intensidade da pá virtual | 0,008 m (8 mm/evento) | `INTENSIDADE_PA_VIRTUAL` |
+
+### 1.1.1 Convenção de Coordenadas Z — Calibração da Tampa
+
+A mesa é calibrada **uma única vez**, antes de qualquer operação, com uma **tampa lisa e plana** cobrindo toda a área do caixão. Essa tampa define o plano de referência:
+
+$$Z_{mesa} = 0{,}0 \text{ m} \quad \text{(nível da tampa — topo do caixão)}$$
+
+Com a tampa removida, a areia ocupa sempre a faixa **negativa**:
+
+$$Z_{mesa} \in \left[-\text{PROFUNDIDADE\_CAIXA},\; 0{,}0\right] = [-0{,}20 \text{ m},\; 0{,}0 \text{ m}]$$
+
+- $Z_{mesa} = 0{,}0$ m → nível da tampa (areia até a borda do caixão)
+- $Z_{mesa} = -0{,}20$ m → fundo físico do caixão (sem areia)
+
+Essa calibração é feita **uma única vez** (não continuamente, como em versões anteriores do sistema) justamente porque a tampa lisa cobre 100 % do campo de visão do sensor — não há paredes, bordas ou areia irregular na cena, eliminando a necessidade de filtragem de outliers (RANSAC) e o risco de degeneração numérica do SVD por dados ruidosos ou heterogêneos. Todos os cálculos de profundidade, mapeamento de coordenadas e classificação de cores do restante deste documento respeitam rigorosamente essa faixa negativa.
 
 ### 1.2 Saídas Visuais
 
@@ -78,7 +94,7 @@ PFC-2026/
 ├── kinect_sensor.py           # Camada de Hardware — KinectSensor (OOP + Grade Persistente)
 ├── motor_caixao_areia.py      # Motor Matemático — álgebra linear + discretização em grade
 ├── mde_cartografia.py         # Adaptador de Dados — AdaptadorMDE (GeoTIFF)
-├── test_motor_caixao.py       # Suíte TDD — 26 testes unitários
+├── test_motor_caixao.py       # Suíte TDD — 53 testes unitários
 ├── DOCUMENTACAO_OFICIAL.md    # Este documento
 └── README.md                  # Guia de uso prático
 ```
@@ -114,36 +130,38 @@ O orquestrador implementa uma máquina de estados finita com quatro estados e tr
 
 ```
          ┌──────┐                  ┌──────────┐
-         │ INIT │─── inicializa ──▶│   IDLE   │
-         └──────┘   KinectSensor   └────┬─────┘
-                    + AdaptadorMDE       │ tecla [C]
-                    + MouseCallback      ▼
-                                   ┌───────────┐
-                      tecla [C] ◀──│CALIBRACAO  │
-                      ┌───────────▶│SVD + G-S + T│
-                      │            └─────┬─────┘
-                      │                  │ sucesso
-                      │                  ▼
-                      │            ┌──────────────────────┐
-                      └────────────│      AR_LOOP         │──── tecla [Q/ESC] ──▶ ENCERRAR
-                                   │ captura nuvem        │
-                                   │ transforma (T)       │
-                                   │ discretiza em grade  │
-                                   │ compara MDE por célula│
-                                   │ projeta vértices (Tsai)│
-                                   │ fillPoly por célula  │
-                                   │       ↑              │
-                                   │ mouse callback       │
-                                   │ modifica _grade_areia│
-                                   └──────────────────────┘
+         │ INIT │── cache ausente ▶│   IDLE   │
+         └──┬───┘   KinectSensor   └────┬─────┘
+            │       + AdaptadorMDE      │ tecla [C]
+            │ calibration_data.json     ▼
+            │       válido?       ┌────────────────┐
+            │                     │  CALIBRACAO    │
+            │                ┌───▶│ SVD (tampa) +  │
+            │                │    │ G-S + T_shift  │
+            │                │    │ → salva JSON   │
+            │                │    └───────┬────────┘
+            │                │            │ sucesso
+            ▼                │            ▼
+      ┌──────────────────────┴──────────────────────┐
+      │                  AR_LOOP                     │──── tecla [Q/ESC] ──▶ ENCERRAR
+      │ captura nuvem                                │
+      │ transforma (T_final)                         │
+      │ discretiza em grade                          │
+      │ compara MDE por célula (vetorizado)           │
+      │ projeta vértices (Tsai)                       │
+      │ fillPoly por célula                           │
+      │       ↑                    tecla [C] ─────────┘ (volta para CALIBRACAO)
+      │ mouse callback                                │
+      │ modifica _grade_areia                         │
+      └───────────────────────────────────────────────┘
 ```
 
 | Estado | Descrição |
 |---|---|
-| **INIT** | Inicializa `KinectSensor` (com fallback e grade persistente), carrega `AdaptadorMDE` (com fallback), cria janelas OpenCV, registra `cv2.setMouseCallback`. |
-| **IDLE** | Exibe profundidade colorida do sensor; aguarda tecla **C** para calibrar. |
-| **CALIBRACAO** | No modo real: captura nuvem → SVD → Gram-Schmidt → Matriz 4×4. No modo simulação: calibração automática ($T = I_4$). |
-| **AR_LOOP** | Loop contínuo: captura → transforma → discretiza em grade → compara MDE por célula → projeta vértices → `fillPoly`. Mouse modifica a areia entre frames. |
+| **INIT** | Inicializa `KinectSensor` (com fallback e grade persistente), carrega `AdaptadorMDE` (com fallback), cria janelas OpenCV, registra `cv2.setMouseCallback`, e tenta carregar `calibration_data.json`. Se um cache válido for encontrado, pula direto para **AR_LOOP**; caso contrário, transiciona para **IDLE**. |
+| **IDLE** | Exibe profundidade colorida do sensor; aguarda tecla **C** para calibrar com a tampa plana. |
+| **CALIBRACAO** | No modo real: captura nuvem da tampa → SVD → Gram-Schmidt → Matriz 4×4 ($T_{final}$) → salva em `calibration_data.json`. No modo simulação: calibração automática ($T = I_4$, $Z=0$ na "tampa" virtual). |
+| **AR_LOOP** | Loop contínuo: captura → transforma → discretiza em grade → compara MDE por célula (vetorizado, quando disponível) → projeta vértices → `fillPoly`. Mouse modifica a areia entre frames. Tecla **C** força recalibração a qualquer momento. |
 
 ### 2.5 Padrões de Projeto Utilizados
 
@@ -163,7 +181,7 @@ O orquestrador implementa uma máquina de estados finita com quatro estados e tr
 | Visão Computacional | OpenCV 4.x | `projectPoints`, `fillPoly`, `setMouseCallback`, colormap, janelas |
 | Nuvem 3D (opcional) | Open3D | Criação de `PointCloud` a partir de RGB-D |
 | GeoTIFF (opcional) | rasterio + scipy | Leitura de MDE real + interpolação bilinear |
-| Testes | unittest / pytest | Suíte TDD com 26 testes automatizados |
+| Testes | unittest / pytest | Suíte TDD com 53 testes automatizados |
 
 ---
 
@@ -173,7 +191,9 @@ O módulo `motor_caixao_areia.py` implementa os pilares matemáticos que convert
 
 ### 3.1 Passo 1 — Ajuste de Plano via Decomposição em Valores Singulares (SVD)
 
-**Objetivo:** Dada uma nuvem de $N$ pontos $\{\mathbf{p}_i\}_{i=1}^{N} \subset \mathbb{R}^3$ capturados pelo Kinect sobre a superfície da mesa, encontrar o plano que melhor se ajusta a esses pontos no sentido dos mínimos quadráticos.
+**Objetivo:** Dada uma nuvem de $N$ pontos $\{\mathbf{p}_i\}_{i=1}^{N} \subset \mathbb{R}^3$ capturados pelo Kinect sobre a **tampa plana de calibração**, encontrar o plano que melhor se ajusta a esses pontos no sentido dos mínimos quadráticos.
+
+**Por que SVD puro, sem RANSAC.** A tampa lisa cobre 100 % do campo de visão do sensor durante a calibração — não há paredes, bordas do caixão, nem areia irregular na cena, logo não há outliers a filtrar. Nessas condições, o ajuste de mínimos quadráticos via SVD já é a estimativa ótima (máxima verossimilhança sob ruído Gaussiano) e numericamente estável; aplicar RANSAC introduziria apenas a variância de uma amostragem aleatória, sem nenhum benefício. `pipeline_plano_e_base()` aceita um parâmetro opcional `usar_ransac=True` para cenários com outliers, mas o fluxo oficial de calibração (`main.py._executar_calibracao`) usa o padrão SVD puro.
 
 **Formulação.** O plano é descrito pela equação:
 
@@ -241,17 +261,62 @@ $$T = \begin{bmatrix} R & \mathbf{t} \\ \mathbf{0}^T & 1 \end{bmatrix}$$
 
 **Modo Simulação:** como os pontos já estão em coordenadas da mesa, $T = I_4$ (identidade).
 
-**Deslocamento ao centro lógico da mesa (modo real).** A matriz $T$ acima leva o **centroide** $\bar{\mathbf{p}}$ para a origem $(0, 0, 0)$. Porém, a convenção interna de discretização e renderização adota a mesa como o domínio $[0, L_x] \times [0, L_y]$, com a origem em um canto. Para alinhar essas duas convenções, compõe-se $T$ com uma translação fixa:
+**Deslocamento ao centro lógico da mesa (modo real).** A matriz $T$ acima leva o **centroide da tampa** $\bar{\mathbf{p}}$ para a origem $(0, 0, 0)$ — e, como a tampa é o próprio plano de referência $Z_{mesa}=0$, essa origem já tem a coordenada Z correta. Porém, a convenção interna de discretização e renderização adota a mesa como o domínio $[0, L_x] \times [0, L_y]$ em X e Y, com a origem em um canto. Para alinhar essas duas convenções **sem alterar Z**, compõe-se $T$ com uma translação fixa, aplicada apenas nos eixos X e Y:
 
 $$T_{\text{shift}} = \begin{bmatrix} 1 & 0 & 0 & L_x/2 \\ 0 & 1 & 0 & L_y/2 \\ 0 & 0 & 1 & 0 \\ 0 & 0 & 0 & 1 \end{bmatrix}, \qquad T_{\text{final}} = T_{\text{shift}} \cdot T$$
 
-Assim, o ponto físico sob o sensor (centroide do plano detectado) cai exatamente em $(L_x/2, L_y/2)$, e a nuvem ocupa naturalmente $[0, L_x] \times [0, L_y]$. Sem este deslocamento, metade dos pontos teria coordenadas negativas e seria colapsada pelo `clip` da função de discretização nas células de borda da grade — produzindo o artefato visual conhecido como **"retângulo único"** observado em testes preliminares de campo.
+Assim, o ponto físico sob o sensor (centroide do plano detectado da tampa) cai exatamente em $(L_x/2, L_y/2, 0)$, e a nuvem ocupa naturalmente $[0, L_x] \times [0, L_y]$ com $Z_{mesa}=0$ na tampa. Sem este deslocamento, metade dos pontos teria coordenadas negativas e seria colapsada pelo `clip` da função de discretização nas células de borda da grade — produzindo o artefato visual conhecido como **"retângulo único"** observado em testes preliminares de campo.
 
-**Implementação:** `montar_matriz_transformacao()` e `transformar_pontos()` em `motor_caixao_areia.py`; o $T_{\text{shift}}$ é aplicado em `_executar_calibracao()` (`main.py`).
+**Implementação:** `montar_matriz_transformacao()` e `transformar_pontos()` em `motor_caixao_areia.py`; o $T_{\text{shift}}$ é aplicado em `_executar_calibracao()` (`main.py`), que em seguida persiste $T_{\text{final}}$ em `calibration_data.json` (ver Seção 3.5).
 
 ---
 
-### 3.4 Passo 4 — Projeção Pinhole / Tsai (3D → 2D)
+### 3.4 Convenção de Sinal — Back-projection Pinhole (Profundidade → Nuvem 3D)
+
+**Problema.** O SDK do Kinect retorna **profundidade**: a distância do sensor até a superfície, que **aumenta** conforme o ponto se afasta do sensor (mais fundo na caixa). Já a base ortonormal construída no Passo 2 atribui, por convenção matemática geral, Z **crescente** a pontos que se afastam do centroide ao longo da normal — sem nenhuma correção, a areia real (sempre mais longe do sensor do que a tampa) resultaria em $Z_{mesa}$ **positivo**, violando a faixa física $[-0{,}20, 0{,}0]$ exigida.
+
+**Solução.** A função pura `profundidade_para_nuvem_mesa()` (`motor_caixao_areia.py`) inverte o sinal apenas na saída, preservando a geometria de back-projection pinhole nas componentes X, Y (que dependem da profundidade **verdadeira**, positiva):
+
+$$X = \frac{(u - c_x) \cdot Z_{\text{real}}}{f_x}, \qquad Y = \frac{(v - c_y) \cdot Z_{\text{real}}}{f_y}, \qquad Z_{\text{mesa}} = -Z_{\text{real}}$$
+
+onde $Z_{\text{real}} = \text{profundidade}_{mm} / 1000$ é a distância verdadeira sensor–superfície, em metros. Pixels com $Z_{\text{real}} \notin (0{,}3,\, 4{,}5)$ m (sem retorno, ou fora da faixa útil do Kinect v2) são descartados antes da back-projection.
+
+**Verificação da propriedade física.** Sejam a tampa a $Z_{\text{real}} = 2{,}500$ m e um ponto de areia 15 cm mais fundo a $Z_{\text{real}} = 2{,}650$ m (mesmos $u, v$). Após a inversão:
+
+$$Z_{\text{mesa}}^{\text{areia}} - Z_{\text{mesa}}^{\text{tampa}} = -2{,}650 - (-2{,}500) = -0{,}150 \text{ m}$$
+
+Ou seja, o ponto mais distante do sensor resulta em $Z_{mesa}$ **0,15 m mais negativo** — exatamente o comportamento exigido pela convenção da mesa. Esta propriedade é verificada explicitamente por `TestBackProjectionMesa.test_ponto_mais_longe_tem_z_mais_negativo` na suíte de testes.
+
+**Implementação:** `profundidade_para_nuvem_mesa()` em `motor_caixao_areia.py`, usada por `KinectSensor.capturar_nuvem()` (`kinect_sensor.py`) no modo real. Em modo simulação, a nuvem já é gerada diretamente em coordenadas da mesa (grade persistente `_grade_areia`), sem passar por esta conversão.
+
+---
+
+### 3.5 Persistência da Calibração — Cache JSON (`calibration_data.json`)
+
+**Motivação.** A calibração da tampa (Passos 1–3) é executada **uma única vez**; repeti-la a cada execução do sistema seria desnecessário e inconveniente (exigiria reposicionar a tampa manualmente toda vez). A matriz $T_{\text{final}}$ resultante é persistida em disco e recarregada automaticamente.
+
+**Formato.** Um objeto JSON com uma única chave:
+
+```json
+{
+  "T_final": [[1.0, 0.0, 0.0, 0.75], [0.0, 1.0, 0.0, 0.75], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]]
+}
+```
+
+**Fluxo de carregamento (`main.py`, estado `INIT`):**
+
+1. Ao iniciar, o sistema chama `carregar_matriz_calibracao(CAMINHO_CALIBRACAO)`.
+2. Se o arquivo existir e contiver uma matriz $4 \times 4$ válida, a calibração manual é **pulada** e o sistema entra diretamente em `AR_LOOP`.
+3. Se o arquivo não existir, estiver corrompido (JSON malformado) ou incompleto (chave `T_final` ausente), a função retorna `None` sem levantar exceção — o sistema permanece em `IDLE`, aguardando a tecla **[C]**.
+4. A qualquer momento, pressionar **[C]** força uma nova calibração e **sobrescreve** o cache, via `salvar_matriz_calibracao()`.
+
+**Robustez.** `carregar_matriz_calibracao()` trata `json.JSONDecodeError`, `KeyError`, `ValueError` e `TypeError` internamente, retornando `None` em vez de propagar a exceção — o carregamento nunca derruba o sistema, mesmo com um arquivo de cache corrompido manualmente. `salvar_matriz_calibracao()`, por outro lado, valida explicitamente o formato de entrada (`shape == (4, 4)`) e levanta `ValueError` em caso contrário, prevenindo a gravação silenciosa de um cache inválido.
+
+**Implementação:** `salvar_matriz_calibracao()` e `carregar_matriz_calibracao()` em `motor_caixao_areia.py`; orquestração em `_tentar_carregar_calibracao_cache()` e `_executar_calibracao()` (`main.py`). Cobertura de testes: `TestPersistenciaCalibracao` (4 casos — round-trip, arquivo ausente, JSON corrompido, shape inválida).
+
+---
+
+### 3.6 Passo 4 — Projeção Pinhole / Tsai (3D → 2D)
 
 **Objetivo:** Converter pontos 3D da mesa em pixels 2D do projetor.
 
@@ -333,6 +398,8 @@ A altura alvo do MDE é consultada nesse centro: $Z_{i,j}^{\text{MDE}} = \text{o
 
 A classificação de cor segue a regra definida na Seção 7, comparando $\bar{Z}_{i,j}^{\text{real}}$ com $Z_{i,j}^{\text{MDE}}$.
 
+**Otimização vetorizada.** Consultar o MDE célula a célula em um laço Python (900 chamadas por quadro, para uma grade $30\times30$) é o principal gargalo de desempenho em hardware modesto. Quando o adaptador de MDE expõe uma variante vetorizada (`AdaptadorMDE.obter_z_alvo_array`, aceita arrays `xs, ys` e retorna todos os $Z^{\text{MDE}}$ de uma vez), `gerar_imagem_grade_cores()` a utiliza via o parâmetro opcional `funcao_mde_vetorizada`, substituindo o laço por uma única chamada NumPy/SciPy. A classificação de cor em si (`cor_por_diferenca_vetorizado()`) também é vetorizada sobre a grade inteira com `numpy.where`, restando como laço Python apenas a rasterização (`cv2.fillPoly`), que é uma chamada por célula inerente à API do OpenCV.
+
 ### 4.4 Projeção em Lote dos Vértices e Rasterização
 
 A grade de $(N_y+1) \times (N_x+1)$ vértices é projetada do referencial 3D da mesa para o plano 2D do projetor em uma **única chamada** a `cv2.projectPoints`:
@@ -362,9 +429,9 @@ Na ausência de hardware físico (sensor Kinect e caixa de areia), o sistema ofe
 
 A classe `KinectSensor`, quando em modo simulação, inicializa e mantém uma **matriz de alturas persistente** $\mathbf{H} \in \mathbb{R}^{R \times R}$ (onde $R = 50$ é a resolução da grade de simulação):
 
-$$H_{i,j}^{(0)} = \frac{h_{\max}}{2} = 0{,}15 \text{ m} \quad \forall\; i, j$$
+$$H_{i,j}^{(0)} = -\frac{p_{\max}}{2} = -0{,}10 \text{ m} \quad \forall\; i, j$$
 
-onde $h_{\max} = 0{,}30$ m é a altura máxima de areia. Essa inicialização simula uma caixa preenchida com areia nivelada exatamente na metade da profundidade.
+onde $p_{\max} = 0{,}20$ m (`PROFUNDIDADE_CAIXA`) é a profundidade física do caixão e a faixa válida é $H_{i,j} \in [-p_{\max},\, 0]$. Essa inicialização simula uma caixa preenchida com areia nivelada exatamente na metade da profundidade — deixando margem para tanto cavar (rumo a $-0{,}20$) quanto preencher (rumo a $0{,}0$) desde o primeiro quadro.
 
 Os eixos da grade mapeiam linearmente para as coordenadas físicas da mesa:
 
@@ -376,7 +443,7 @@ A cada frame do loop principal, `capturar_nuvem()` retorna a nuvem de pontos $(x
 
 Ao receber um evento de mouse na posição física $\mathbf{m} = (x_m, y_m)$ na mesa, o sistema aplica a seguinte atualização à matriz de alturas:
 
-$$H_{i,j}^{(t+1)} = \text{clip}\!\left( H_{i,j}^{(t)} \pm \alpha \cdot \exp\!\left( -\frac{(x_j - x_m)^2 + (y_i - y_m)^2}{2\sigma^2} \right),\; 0,\; h_{\max} \right)$$
+$$H_{i,j}^{(t+1)} = \text{clip}\!\left( H_{i,j}^{(t)} \pm \alpha \cdot \exp\!\left( -\frac{(x_j - x_m)^2 + (y_i - y_m)^2}{2\sigma^2} \right),\; -p_{\max},\; 0 \right)$$
 
 onde:
 
@@ -385,9 +452,9 @@ onde:
 | $\alpha$ | Intensidade do deslocamento por evento (metros) | $0{,}008$ m (8 mm) |
 | $\sigma$ | Desvio padrão do perfil Gaussiano | $r / 2 = 0{,}05$ m |
 | $r$ | Raio de ação da pá virtual | $0{,}10$ m (10 cm) |
-| $+$ | Operador ao preencher (botão direito) | — |
-| $-$ | Operador ao cavar (botão esquerdo) | — |
-| $\text{clip}(v, a, b)$ | $\max(a, \min(v, b))$ | $[0, 0{,}30]$ m |
+| $+$ | Operador ao preencher (botão direito), rumo à tampa | — |
+| $-$ | Operador ao cavar (botão esquerdo), rumo ao fundo | — |
+| $\text{clip}(v, a, b)$ | $\max(a, \min(v, b))$ | $[-0{,}20,\, 0{,}00]$ m |
 
 **Justificativa do perfil Gaussiano.** A distribuição Gaussiana 2D produz uma deformação suave e natural, isenta dos artefatos visuais de escavações retangulares ou cônicas. Com $\sigma = r/2$, aproximadamente 95% da energia do operador concentra-se dentro do raio $r$:
 
@@ -444,7 +511,7 @@ Inicialização (construtor):
   3. Ambos falharam?  →  Modo Simulação Interativo automático.
 ```
 
-**No Modo Simulação Interativo**, o sensor mantém uma grade persistente de alturas $\mathbf{H} \in \mathbb{R}^{50 \times 50}$, inicializada em $Z = 0{,}15$ m. A cada chamada de `capturar_nuvem()`, a nuvem é reconstruída a partir do estado atual da grade (incluindo modificações feitas pelo mouse). O método `modificar_areia(x, y, cavar)` permite alterar as alturas em tempo real com perfil Gaussiano.
+**No Modo Simulação Interativo**, o sensor mantém uma grade persistente de alturas $\mathbf{H} \in \mathbb{R}^{50 \times 50}$, inicializada em $Z = -0{,}10$ m (meio da profundidade física do caixão). A cada chamada de `capturar_nuvem()`, a nuvem é reconstruída a partir do estado atual da grade (incluindo modificações feitas pelo mouse). O método `modificar_areia(x, y, cavar)` permite alterar as alturas em tempo real com perfil Gaussiano, sempre dentro da faixa $[-0{,}20,\, 0{,}00]$ m.
 
 ### 6.2 MDE — `AdaptadorMDE` (mde_cartografia.py)
 
@@ -453,38 +520,38 @@ Inicialização (construtor):
   1. Resolve caminho via pathlib (relativo ao diretório do script).
   2. Tenta ler GeoTIFF com rasterio  →  sucesso? normaliza e usa.
   3. Arquivo não existe / rasterio não instalado / erro de leitura?
-     →  Log de erro detalhado + gera Morro Gaussiano sintético.
+     →  Log de erro detalhado + gera mapa sintético "Cubo Central".
 ```
 
-**No modo real**, o GeoTIFF é lido via `rasterio`, convertido para `float32`, valores nodata substituídos pelo mínimo válido, e as elevações são normalizadas de $[z_{\min}, z_{\max}]$ para $[0, 0.30]$ m. Um interpolador bilinear (`scipy.interpolate.RegularGridInterpolator`) permite consultas pontuais suaves em qualquer coordenada $(x, y)$.
+**No modo real**, o GeoTIFF é lido via `rasterio`, convertido para `float32`, valores nodata substituídos pelo mínimo válido, e as elevações são normalizadas de $[z_{\min}, z_{\max}]$ para $[-p_{\max},\, 0{,}0]$ m, onde $p_{\max} = 0{,}20$ m é `PROFUNDIDADE_CAIXA`. Um interpolador bilinear (`scipy.interpolate.RegularGridInterpolator`) permite consultas pontuais suaves em qualquer coordenada $(x, y)$.
 
-**No Modo Simulação**, é gerado um **Morro Gaussiano** perfeitamente centralizado:
+**No Modo Simulação**, é gerado o mapa sintético **"Cubo Central"** — um platô quadrado, escolhido por ser fácil de reproduzir fisicamente em bancada (basta erguer um bloco de 10 cm de areia sobre um gabarito de 50×50 cm no centro da mesa):
 
-$$Z_{\text{MDE}}(x, y) = 0.3 \cdot \exp\!\left(-\frac{(x - 0.75)^2 + (y - 0.75)^2}{0.1}\right)$$
+$$Z_{\text{MDE}}(x, y) = \begin{cases} -0{,}10 \text{ m} & \text{se } 0{,}50 \le x \le 1{,}00 \text{ e } 0{,}50 \le y \le 1{,}00 \\ -0{,}20 \text{ m} & \text{caso contrário} \end{cases}$$
 
 | Propriedade | Valor |
 |---|---|
-| Centro do morro | $(x, y) = (0.75, 0.75)$ — centro exato da mesa |
-| Altura no pico | $Z = 0.30$ m (altura máxima de areia) |
-| Altura nas bordas | $Z \approx 0.00$ m (decaimento exponencial) |
-| Parâmetro de dispersão | $\sigma^2 = 0.05$ ($2\sigma^2 = 0.1$ no denominador) |
-| Resolução da grade | 100 × 100 pontos |
+| Platô central | $x \in [0{,}50,\, 1{,}00]$ m, $y \in [0{,}50,\, 1{,}00]$ m (50×50 cm, centrado na mesa 1,5×1,5 m) |
+| Altura do platô | $Z = -0{,}10$ m (10 cm acima do fundo) |
+| Altura fora do platô | $Z = -0{,}20$ m (fundo físico do caixão) |
+| Bordas do platô | **Inclusivas** ($\le$ / $\ge$), sem suavização |
+| Avaliação | **Analítica** (`altura_cubo_central()`), sem interpolação — preserva as arestas exatas do platô |
+| Resolução da grade de visualização | 100 × 100 pontos (apenas para o heatmap; a consulta pontual é analítica) |
 
-**Derivação da escolha do parâmetro $0.1$:** com $\sigma^2 = 0.05$, temos $2\sigma \approx 0.316$ m. Na borda da mesa (distância $\sqrt{0.75^2 + 0.75^2} \approx 1.06$ m do centro), o expoente é $\approx -11.25$, resultando em $Z \approx 0.3 \cdot e^{-11.25} \approx 0.000004$ m — efetivamente zero.
+**Vetorização.** `altura_cubo_central(x, y)` é implementada com `numpy.where` sobre uma máscara booleana, aceitando tanto escalares quanto arrays de qualquer shape — uma única chamada classifica a grade inteira sem laços Python (ver Seção 4.3).
 
 ### 6.3 Combinação das Simulações — Demonstração Interativa
 
-Quando Kinect e GeoTIFF estão ausentes, a combinação dos dois mocks define o estado inicial da visualização:
+Quando Kinect e GeoTIFF estão ausentes, a combinação dos dois mocks define o estado inicial da visualização (areia nivelada em $-0{,}10$ m, MDE = Cubo Central):
 
-| Região da mesa | $\bar{Z}^{\text{real}}$ (Areia) | $Z^{\text{MDE}}$ (Gaussiano) | Diferença | Cor |
+| Região da mesa | $\bar{Z}^{\text{real}}$ (Areia) | $Z^{\text{MDE}}$ (Cubo Central) | Diferença | Cor |
 |---|---|---|---|---|
-| **Bordas** (longe do centro) | 0,15 m | ≈ 0,00 m | $+0{,}15 > +0{,}02$ | 🔴 **Vermelho** (cavar) |
-| **Anel intermediário** ($r \approx 0{,}26$ m do centro) | 0,15 m | ≈ 0,15 m | $\approx 0 \leq 0{,}02$ | 🟢 **Verde** (OK) |
-| **Centro** (pico do morro) | 0,15 m | ≈ 0,30 m | $-0{,}15 < -0{,}02$ | 🔵 **Azul** (preencher) |
+| **Platô central** (50×50 cm) | -0,10 m | -0,10 m | $0 \leq 0{,}02$ | 🟢 **Verde** (OK) |
+| **Fora do platô** (restante da mesa) | -0,10 m | -0,20 m | $+0{,}10 > +0{,}02$ | 🔴 **Vermelho** (cavar) |
 
 Com o emulador interativo, o operador pode:
-1. **Arrastar botão direito** no centro azul → areia sobe → quadrados se tornam verdes.
-2. **Arrastar botão esquerdo** nas bordas vermelhas → areia desce → quadrados se tornam verdes.
+1. **Arrastar botão esquerdo** fora do platô (vermelho) → areia desce ao fundo → quadrados se tornam verdes.
+2. **Arrastar botão direito** dentro do platô, se necessário → areia sobe ao nível do platô → quadrados se tornam verdes.
 3. **Objetivo**: tornar toda a grade verde, replicando o MDE com a areia virtual.
 
 As cores reagem **instantaneamente** a cada evento de mouse, demonstrando em tempo real o pipeline completo: modificação da grade → captura da nuvem → discretização → comparação MDE → projeção Tsai → renderização `fillPoly`.
@@ -514,11 +581,11 @@ $$\text{cor}(i,j) = \begin{cases} \color{red}{\textbf{Vermelho}} \; (0, 0, 255)_
 
 ### 8.1 Estratégia de Testes
 
-A estabilidade do motor matemático foi assegurada com **Test-Driven Development (TDD)**, resultando em **26 testes unitários** no módulo `test_motor_caixao.py`:
+A estabilidade do motor matemático foi assegurada com **Test-Driven Development (TDD)**, resultando em **53 testes unitários** no módulo `test_motor_caixao.py`:
 
 ```bash
 python -m unittest test_motor_caixao -v
-# Resultado: 25 passed, 1 skipped (Open3D não instalado)
+# Resultado: 52 passed, 1 skipped (Open3D não instalado)
 ```
 
 ### 8.2 Cobertura por Componente
@@ -532,8 +599,14 @@ python -m unittest test_motor_caixao -v
 | `TestDeteccaoTabuleiro` | 2 | Imagem sem tabuleiro → `False`, tabuleiro sintético $7 \times 5$ → cantos detectados |
 | `TestProjecaoTsai` | 3 | Projeção no ponto principal, deslocamento em $x$, múltiplos pontos |
 | `TestLeituraRGBD` | 1 | Importação condicional do Open3D (skip gracioso se ausente) |
-| `TestMDEColoracao` | 6 | Vermelho/Azul/Verde, limites exatos, mock com rampa linear |
-| `TestPipeline` | 2 | Integração completa: plano $z=0$ e ponto acima do plano $z=10$ |
+| `TestBackProjectionMesa` | 4 | Convenção de sinal Z na back-projection pinhole, filtro de alcance do sensor |
+| `TestCalibracaoTampa` | 5 | SVD na tampa ($Z=0$), $T_{\text{shift}}$ centraliza em $L/2$, areia mapeia para $Z$ negativo |
+| `TestPipeline` | 2 | Integração completa (genérica): plano $z=0$ e ponto acima do plano $z=10$ |
+| `TestPersistenciaCalibracao` | 4 | Round-trip do cache JSON, arquivo ausente, JSON corrompido, shape inválida |
+| `TestCuboCentral` | 7 | Platô $-0{,}10$ m, fundo $-0{,}20$ m, bordas inclusivas, versão vetorizada, integração com `AdaptadorMDE` |
+| `TestColoracaoBGR` | 10 | Vermelho/Azul/Verde nos limiares físicos $-0{,}10$ m e $-0{,}20$ m, limite exato, classificação vetorizada |
+| `TestDiscretizacaoGradeNegativa` | 1 | Agregação por célula (`discretizar_nuvem_em_grade`) com alturas negativas |
+| `TestRenderizacaoGrade` | 2 | Pipeline completo grade → cor → Tsai → `fillPoly` (com e sem MDE vetorizado) |
 
 ### 8.3 Filosofia — Transparência Matemática
 
@@ -588,7 +661,7 @@ O sistema detecta automaticamente o hardware disponível. Se nenhum Kinect estiv
 
 | Tecla | Ação |
 |---|---|
-| **C** | Calibrar (SVD + Gram-Schmidt + Matriz 4×4) |
+| **C** | Calibrar com a tampa plana (SVD + Gram-Schmidt + Matriz 4×4) — salva `calibration_data.json` |
 | **F** | Toggle tela cheia na janela Projecao_Areia |
 | **Q** / **ESC** | Encerrar |
 
@@ -596,22 +669,22 @@ O sistema detecta automaticamente o hardware disponível. Se nenhum Kinect estiv
 
 | Ação | Efeito | Análogo físico |
 |---|---|---|
-| **Botão Esquerdo + Arrastar** | Diminui $Z_{real}$ (cava) | Pá escavando |
-| **Botão Direito + Arrastar** | Aumenta $Z_{real}$ (preenche) | Balde despejando |
+| **Botão Esquerdo + Arrastar** | Diminui $Z_{real}$ (cava, rumo a -0,20 m) | Pá escavando |
+| **Botão Direito + Arrastar** | Aumenta $Z_{real}$ (preenche, rumo a 0,00 m) | Balde despejando |
 
 ### 9.4 Roteiro de Demonstração para a Banca
 
 | Passo | Ação | Resultado esperado |
 |---|---|---|
 | 1 | `python main.py` | Duas janelas abrem: **Projecao_Areia** e **Gabarito_MDE** |
-| 2 | Pressionar **C** | Calibração automática ($T = I_4$, projeção configurada) |
-| 3 | Observar **Projecao_Areia** | Grade contínua de quadrados: bordas vermelhas, anel verde, centro azul |
-| 4 | Observar **Gabarito_MDE** | Heatmap do Morro Gaussiano de referência |
-| 5 | **Arrastar botão direito** no centro (azul) | Quadrados mudam de azul → verde (areia subindo) |
-| 6 | **Arrastar botão esquerdo** nas bordas (vermelho) | Quadrados mudam de vermelho → verde (areia descendo) |
+| 2 | (1ª execução) Pressionar **C**; (execuções seguintes) automático | Calibração da tampa via SVD, $T_{final}$ salvo em `calibration_data.json`; nas execuções seguintes, o cache é carregado e o sistema pula direto para o AR_LOOP |
+| 3 | Observar **Projecao_Areia** | Grade contínua de quadrados: platô central verde, restante da mesa vermelho (antes de ajustar a areia) |
+| 4 | Observar **Gabarito_MDE** | Heatmap do Cubo Central de referência (platô 50×50 cm a $-0{,}10$ m) |
+| 5 | **Arrastar botão esquerdo** fora do platô (vermelho) | Quadrados mudam de vermelho → verde (areia descendo ao fundo, $-0{,}20$ m) |
+| 6 | **Arrastar botão direito** dentro do platô, se necessário | Quadrados mudam para verde (areia subindo ao nível do platô, $-0{,}10$ m) |
 | 7 | Continuar interagindo | Objetivo: toda a grade verde — terreno replica o MDE |
 | 8 | Pressionar **F** | Tela cheia (projetor real) |
-| 9 | Pressionar **C** | Recalibração (demonstra robustez) |
+| 9 | Pressionar **C** | Recalibração manual (sobrescreve `calibration_data.json`, demonstra robustez) |
 | 10 | Pressionar **Q** | Encerramento limpo |
 
 ### 9.5 Execução dos Testes
@@ -620,10 +693,10 @@ O sistema detecta automaticamente o hardware disponível. Se nenhum Kinect estiv
 python -m unittest test_motor_caixao -v
 ```
 
-Saída esperada: **25 passed, 1 skipped** (Open3D ausente no ambiente de teste).
+Saída esperada: **52 passed, 1 skipped** (Open3D ausente no ambiente de teste).
 
 ---
 
-> **Documento gerado em:** Maio de 2026
-> **Versão:** 3.2 — Compatibilidade Python 3.12 + correções pykinect2 (numpy 1.26.4, comtypes 1.3.1)
+> **Documento gerado em:** Julho de 2026
+> **Versão:** 4.0 — Calibração da Tampa (SVD único + cache JSON), convenção $Z_{mesa} \in [-0{,}20, 0{,}0]$ m, mapa sintético Cubo Central
 > **Sistema:** Finalizado, testado e pronto para defesa
