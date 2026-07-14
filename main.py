@@ -71,12 +71,18 @@ AR_LOOP
 
 Configuração
 ------------
-As variáveis no topo do arquivo controlam caminhos de arquivo,
-resolução e tolerância — edite-as antes de rodar.
+Nada é hardcoded: **todo** parâmetro físico ou de simulação (mapa,
+dimensões da mesa, altura do Kinect, tolerância de cor, resolução do
+projetor, malha de discretização, RANSAC, pá virtual) é definido pelo
+operador na janela de configuração (Tkinter) exibida ao iniciar —
+ver ``CONFIG_PADRAO`` e ``_abrir_gui_configuracao``. Os campos validam
+em tempo real e podem ser salvos/carregados como perfil ``.json`` pelos
+botões "Salvar Configuração" / "Carregar Configuração".
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import sys
 import time
@@ -86,6 +92,7 @@ from typing import Optional
 import tkinter as tk
 from tkinter import filedialog, messagebox
 
+import customtkinter as ctk
 import cv2
 import numpy as np
 
@@ -120,71 +127,67 @@ from mde_cartografia import AdaptadorMDE, TIPO_MAPA_CUBO, TIPO_MAPA_GAUSSIANA
 
 
 # =====================================================================
-# CONFIGURAÇÃO — edite aqui antes de rodar
+# CONFIGURAÇÃO PADRÃO — usada apenas para popular os campos da GUI
 # =====================================================================
-
-CAMINHO_GEOTIFF: str = "25S51_ZN.tif"
-"""Caminho para o GeoTIFF da Cartografia.  Se não existir, o sistema
-gera uma superfície sintética automaticamente."""
-
-RESOLUCAO_PROJETOR: tuple[int, int] = (640, 480)
-"""``(largura, altura)`` em pixels da janela de projeção."""
-
-TOLERANCIA_COR: float = 0.02
-"""Tolerância em metros (2 cm) para a classificação Vermelho/Azul/Verde."""
-
-LARGURA_MESA: float = 1.50
-"""Dimensão X da caixa de areia em metros (1,5 m)."""
-
-COMPRIMENTO_MESA: float = 1.50
-"""Dimensão Y da caixa de areia em metros (1,5 m)."""
-
-PROFUNDIDADE_CAIXA: float = 0.20
-"""Profundidade física do caixão em metros (20 cm), fixada pela
-especificação: a areia ocupa sempre Z_mesa ∈ [-0.20 m, 0.0 m], onde
-0.0 m é o nível da tampa de calibração (topo) e -0.20 m é o fundo."""
-
-ALTURA_KINECT: float = 2.50
-"""Altura de montagem do Kinect acima do nível da tampa (Z_mesa = 0),
-em metros."""
+# Nenhum destes valores é usado diretamente pelo motor de simulação.
+# Eles só preenchem os campos da janela de configuração (Tkinter) como
+# ponto de partida editável — o valor que de fato entra em vigor é
+# sempre o que o operador confirma (ou altera) na GUI antes de clicar em
+# "INICIAR SIMULAÇÃO" (ver ``_abrir_gui_configuracao`` e o bloco de
+# atribuição em ``main()``). Também é o dicionário usado para preencher
+# campos ausentes ao carregar um perfil salvo mais antigo (compatível
+# com versões futuras que adicionem novos parâmetros).
+CONFIG_PADRAO: dict = {
+    "caminho_geotiff": "",
+    "tipo_mapa": TIPO_MAPA_CUBO,
+    "largura_mesa": 1.50,
+    "comprimento_mesa": 1.50,
+    "profundidade_caixa": 0.20,
+    "altura_kinect": 2.50,
+    "tolerancia_cor": 0.02,
+    "resolucao_largura": 640,
+    "resolucao_altura": 480,
+    "ransac_n_iter": 1000,
+    "ransac_limiar_dist": 0.03,
+    "celulas_grade_x": 30,
+    "celulas_grade_y": 30,
+    "raio_pa_virtual": 0.05,
+    "intensidade_pa_virtual": 0.008,
+    "forcar_simulacao": False,
+}
 
 CAMINHO_CALIBRACAO: str = "calibration_data.json"
 """Cache local da matriz de calibração T_final (4×4).  Carregado
-automaticamente no início; recriado sempre que a tecla [C] é usada."""
-
-RANSAC_N_ITER: int = 1000
-"""Iterações do RANSAC na calibração da tampa.  O FOV do Kinect é mais
-largo que o caixão (captura moldura de madeira, piso e ruído da sala),
-então o plano dominante da tampa é isolado por amostragem robusta antes
-do refinamento por SVD."""
-
-RANSAC_LIMIAR_DIST: float = 0.03
-"""Distância máxima (3 cm) de um ponto ao plano candidato da tampa para
-ser considerado inlier durante o RANSAC de calibração."""
-
-CELULAS_GRADE_X: int = 30
-"""Número de colunas da grade de discretização (eixo X).
-Com a mesa de 1,5 m, 30 colunas geram quadrados de 5 cm × 5 cm."""
-
-CELULAS_GRADE_Y: int = 30
-"""Número de linhas da grade de discretização (eixo Y).
-Com a mesa de 1,5 m, 30 linhas geram quadrados de 5 cm × 5 cm."""
-
-RAIO_PA_VIRTUAL: float = 0.05
-"""Raio de ação da pá virtual (mouse) em metros (5 cm), tanto para
-cavar (botão esquerdo) quanto para preencher (botão direito)."""
-
-INTENSIDADE_PA_VIRTUAL: float = 0.008
-"""Deslocamento de areia por evento de mouse no centro do pincel (8 mm)."""
-
-FORCAR_SIMULACAO: bool = False
-"""Se ``True``, ignora o Kinect e usa nuvem sintética."""
+automaticamente no início; recriado sempre que a tecla [C] é usada.
+Caminho de infraestrutura interna — não é um parâmetro físico/de
+simulação, por isso não é exposto na GUI."""
 
 JANELA_PROJECAO: str = "Projecao_Areia"
 """Nome da janela OpenCV de projeção AR (para o projetor)."""
 
 JANELA_GABARITO: str = "Gabarito_MDE"
 """Nome da janela OpenCV com o heatmap de referência do MDE."""
+
+# ---------------------------------------------------------------------
+# Parâmetros efetivos de execução — apenas anotados aqui (sem valor).
+# São atribuídos em main() a partir do dicionário devolvido pela GUI de
+# configuração, então qualquer uso acidental antes disso falha alto e
+# claro (NameError) em vez de silenciosamente rodar com um valor de
+# fábrica que o operador nunca viu nem confirmou.
+CAMINHO_GEOTIFF: str
+RESOLUCAO_PROJETOR: tuple[int, int]
+TOLERANCIA_COR: float
+LARGURA_MESA: float
+COMPRIMENTO_MESA: float
+PROFUNDIDADE_CAIXA: float
+ALTURA_KINECT: float
+RANSAC_N_ITER: int
+RANSAC_LIMIAR_DIST: float
+CELULAS_GRADE_X: int
+CELULAS_GRADE_Y: int
+RAIO_PA_VIRTUAL: float
+INTENSIDADE_PA_VIRTUAL: float
+FORCAR_SIMULACAO: bool
 
 # =====================================================================
 # Logging
@@ -749,94 +752,295 @@ def _linhas_estado_sistema(
 
 
 # =====================================================================
-# GUI de Configuração Inicial (Tkinter)
+# GUI de Configuração Inicial (CustomTkinter — flat/Material, dark/light)
 # =====================================================================
 
+# Paletas de estado dos campos — tuplas (modo_claro, modo_escuro), no
+# padrão de cor do CustomTkinter, para reagir automaticamente à troca
+# de tema sem precisar recalcular cores na mão.
+_COR_BORDA_NORMAL = ("#C9CDD1", "#4A4D50")
+_COR_BORDA_FOCO = ("#1F6AA5", "#3B8ED0")
+_COR_BORDA_INVALIDA = ("#D32F2F", "#EF5350")
+_COR_ACCENT_INICIAR = ("#2E7D32", "#388E3C")
+_COR_ACCENT_INICIAR_HOVER = ("#1B5E20", "#2E7D32")
+
+
 def _abrir_gui_configuracao() -> Optional[dict]:
-    """Exibe janela Tkinter para o operador selecionar o mapa e confirmar
-    as dimensões da mesa antes de iniciar o pipeline AR.
+    """Exibe janela CustomTkinter (tema flat, dark/light automático) para
+    o operador configurar **todo** o pipeline AR (mapa, dimensões
+    físicas, sensor, projeção, malha, calibração e pá virtual) antes de
+    iniciar — nenhum desses parâmetros é hardcoded no motor de
+    simulação; todos vêm do dicionário devolvido por esta janela.
+
+    Layout compacto em abas (``CTkTabview``) — "Mapa Tático",
+    "Dimensões Físicas" e "Simulação Avançada" — com campos organizados
+    em grade de 2 colunas, para que a janela inteira caiba em ~700 px
+    de altura em vez de crescer verticalmente com uma lista longa de
+    campos empilhados.
+
+    Cada campo numérico é validado em tempo real (``trace_add`` na
+    ``StringVar``): a borda fica vermelha e a mensagem de erro aparece
+    no rodapé (fixo, fora das abas) até que todos os campos estejam
+    válidos — só então "INICIAR SIMULAÇÃO" é habilitado. Os botões
+    "Salvar Configuração" / "Carregar Configuração" exportam/importam
+    esse mesmo conjunto de campos para um arquivo JSON local.
 
     Returns
     -------
     dict | None
-        Dicionário com ``caminho_geotiff``, ``largura_mesa``,
-        ``comprimento_mesa`` e ``profundidade_caixa``.
-        ``None`` se o usuário fechou a janela sem iniciar.
+        Dicionário com todos os parâmetros confirmados pelo operador
+        (ver chaves em ``CONFIG_PADRAO``).  ``None`` se o usuário fechou
+        a janela sem iniciar.
     """
     resultado: dict = {}
 
-    root = tk.Tk()
+    ctk.set_appearance_mode("System")
+    ctk.set_default_color_theme("blue")
+
+    root = ctk.CTk()
     root.title("Caixão de Areia — Configuração")
-    root.resizable(False, False)
+    root.geometry("640x720")
+    root.minsize(600, 640)
+    root.maxsize(640, 900)  # nunca cresce além de uma tela padrão
+    root.grid_columnconfigure(0, weight=1)
+    root.grid_rowconfigure(2, weight=1)  # abas expandem; cabeçalho/rodapé fixos
 
-    # ── Variáveis de estado ──
-    var_caminho = tk.StringVar(value="")
-    var_largura = tk.StringVar(value="1.50")
-    var_comprimento = tk.StringVar(value="1.50")
-    var_altura = tk.StringVar(value="0.20")
+    # ── Variáveis de estado — semeadas a partir de CONFIG_PADRAO ──
+    # (único lugar do arquivo com valores "de fábrica"; o motor de
+    # simulação nunca lê CONFIG_PADRAO diretamente.)
+    var_caminho = tk.StringVar(value=CONFIG_PADRAO["caminho_geotiff"])
+    var_tipo_mapa = tk.StringVar(value=CONFIG_PADRAO["tipo_mapa"])
     var_demo = tk.BooleanVar(value=False)
-    var_tipo_mapa = tk.StringVar(value=TIPO_MAPA_CUBO)
 
-    # ── Título ──
-    tk.Label(
-        root,
-        text="Caixão de Areia — AR Sandbox",
-        font=("Segoe UI", 16, "bold"),
-    ).pack(pady=(18, 2))
-    tk.Label(
-        root,
-        text="PFC Engenharia de Computação — IME 2026",
-        font=("Segoe UI", 10),
-        fg="#555555",
-    ).pack(pady=(0, 15))
+    var_largura = tk.StringVar(value=str(CONFIG_PADRAO["largura_mesa"]))
+    var_comprimento = tk.StringVar(value=str(CONFIG_PADRAO["comprimento_mesa"]))
+    var_altura_caixa = tk.StringVar(value=str(CONFIG_PADRAO["profundidade_caixa"]))
+    var_altura_kinect = tk.StringVar(value=str(CONFIG_PADRAO["altura_kinect"]))
+    var_tolerancia = tk.StringVar(value=str(CONFIG_PADRAO["tolerancia_cor"]))
 
-    # ── Seção: Mapa Tático ──
-    frame_mapa = tk.LabelFrame(
-        root,
-        text="  Mapa Tático  ",
-        font=("Segoe UI", 11, "bold"),
-        padx=15,
-        pady=10,
+    var_res_largura = tk.StringVar(value=str(CONFIG_PADRAO["resolucao_largura"]))
+    var_res_altura = tk.StringVar(value=str(CONFIG_PADRAO["resolucao_altura"]))
+    var_grade_x = tk.StringVar(value=str(CONFIG_PADRAO["celulas_grade_x"]))
+    var_grade_y = tk.StringVar(value=str(CONFIG_PADRAO["celulas_grade_y"]))
+
+    var_ransac_iter = tk.StringVar(value=str(CONFIG_PADRAO["ransac_n_iter"]))
+    var_ransac_limiar = tk.StringVar(value=str(CONFIG_PADRAO["ransac_limiar_dist"]))
+
+    var_raio_pa = tk.StringVar(value=str(CONFIG_PADRAO["raio_pa_virtual"]))
+    var_intensidade_pa = tk.StringVar(value=str(CONFIG_PADRAO["intensidade_pa_virtual"]))
+    var_forcar_sim = tk.BooleanVar(value=CONFIG_PADRAO["forcar_simulacao"])
+
+    # ── Validação em tempo real (borda vermelha + foco em azul) ──
+    entradas: dict[str, ctk.CTkEntry] = {}
+    mensagens: dict[str, str] = {}
+    focados: dict[str, bool] = {}
+
+    def _atualizar_cor_borda(chave: str) -> None:
+        entrada = entradas.get(chave)
+        if entrada is None:
+            return
+        if mensagens.get(chave):
+            entrada.configure(border_color=_COR_BORDA_INVALIDA, border_width=2)
+        elif focados.get(chave):
+            entrada.configure(border_color=_COR_BORDA_FOCO, border_width=2)
+        else:
+            entrada.configure(border_color=_COR_BORDA_NORMAL, border_width=1)
+
+    def _validar_campo(chave: str, var: tk.StringVar, nome: str, inteiro: bool = False) -> None:
+        texto = var.get().strip()
+        try:
+            valor = int(texto) if inteiro else float(texto)
+            if valor <= 0:
+                raise ValueError
+            mensagens[chave] = ""
+        except ValueError:
+            tipo = "um número inteiro" if inteiro else "um número decimal"
+            mensagens[chave] = f"{nome}: informe {tipo} maior que zero."
+        _atualizar_cor_borda(chave)
+        _atualizar_estado_geral()
+
+    def _atualizar_estado_geral() -> None:
+        if var_demo.get():
+            erro_mapa = ""
+        else:
+            erro_mapa = "" if var_caminho.get() else (
+                "Selecione um mapa tático (.TIF) ou marque o modo demonstração."
+            )
+        primeiro_erro = erro_mapa or next((m for m in mensagens.values() if m), "")
+        lbl_erro.configure(text=primeiro_erro)
+        btn_iniciar.configure(state="disabled" if primeiro_erro else "normal")
+
+    def _registrar_campo(
+        parent: ctk.CTkBaseClass, row: int, col: int, rotulo: str,
+        var: tk.StringVar, chave: str, nome: str, inteiro: bool = False,
+    ) -> ctk.CTkEntry:
+        """Cria um par rótulo+campo dentro de uma célula de grade 2 colunas
+        (``col`` 0 ou 1), com validação em tempo real e realce de foco."""
+        wrapper = ctk.CTkFrame(parent, fg_color="transparent")
+        wrapper.grid(row=row, column=col, sticky="ew", padx=8, pady=6)
+        ctk.CTkLabel(
+            wrapper, text=rotulo, font=ctk.CTkFont(size=12),
+            anchor="w", justify="left",
+        ).pack(anchor="w", fill="x")
+        entrada = ctk.CTkEntry(
+            wrapper, textvariable=var, corner_radius=8, height=32,
+            justify="center", border_width=1, border_color=_COR_BORDA_NORMAL,
+        )
+        entrada.pack(anchor="w", fill="x", pady=(3, 0))
+        entradas[chave] = entrada
+        var.trace_add("write", lambda *_: _validar_campo(chave, var, nome, inteiro))
+        entrada.bind("<FocusIn>", lambda _e, c=chave: (focados.__setitem__(c, True), _atualizar_cor_borda(c)))
+        entrada.bind("<FocusOut>", lambda _e, c=chave: (focados.__setitem__(c, False), _atualizar_cor_borda(c)))
+        return entrada
+
+    # ── Salvar / Carregar Configuração (perfil JSON) ──
+    def _coletar_dados_perfil() -> dict:
+        return {
+            "caminho_geotiff": var_caminho.get(),
+            "tipo_mapa": var_tipo_mapa.get(),
+            "usar_demo": var_demo.get(),
+            "largura_mesa": var_largura.get(),
+            "comprimento_mesa": var_comprimento.get(),
+            "profundidade_caixa": var_altura_caixa.get(),
+            "altura_kinect": var_altura_kinect.get(),
+            "tolerancia_cor": var_tolerancia.get(),
+            "resolucao_largura": var_res_largura.get(),
+            "resolucao_altura": var_res_altura.get(),
+            "ransac_n_iter": var_ransac_iter.get(),
+            "ransac_limiar_dist": var_ransac_limiar.get(),
+            "celulas_grade_x": var_grade_x.get(),
+            "celulas_grade_y": var_grade_y.get(),
+            "raio_pa_virtual": var_raio_pa.get(),
+            "intensidade_pa_virtual": var_intensidade_pa.get(),
+            "forcar_simulacao": var_forcar_sim.get(),
+        }
+
+    def salvar_configuracao() -> None:
+        caminho = filedialog.asksaveasfilename(
+            title="Salvar Configuração",
+            defaultextension=".json",
+            filetypes=[("Configuração JSON", "*.json"), ("Todos os arquivos", "*.*")],
+        )
+        if not caminho:
+            return
+        try:
+            with open(caminho, "w", encoding="utf-8") as f:
+                json.dump(_coletar_dados_perfil(), f, indent=2, ensure_ascii=False)
+        except OSError as e:
+            messagebox.showerror("Erro ao Salvar", f"Não foi possível salvar o arquivo:\n{e}")
+            return
+        messagebox.showinfo("Configuração Salva", f"Configuração salva em:\n{caminho}")
+
+    def carregar_configuracao() -> None:
+        caminho = filedialog.askopenfilename(
+            title="Carregar Configuração",
+            filetypes=[("Configuração JSON", "*.json"), ("Todos os arquivos", "*.*")],
+        )
+        if not caminho:
+            return
+        try:
+            with open(caminho, "r", encoding="utf-8") as f:
+                dados = json.load(f)
+        except (OSError, json.JSONDecodeError) as e:
+            messagebox.showerror("Erro ao Carregar", f"Não foi possível ler o arquivo:\n{e}")
+            return
+
+        var_caminho.set(str(dados.get("caminho_geotiff", CONFIG_PADRAO["caminho_geotiff"])))
+        var_tipo_mapa.set(dados.get("tipo_mapa", CONFIG_PADRAO["tipo_mapa"]))
+        var_demo.set(bool(dados.get("usar_demo", False)))
+        var_largura.set(str(dados.get("largura_mesa", CONFIG_PADRAO["largura_mesa"])))
+        var_comprimento.set(str(dados.get("comprimento_mesa", CONFIG_PADRAO["comprimento_mesa"])))
+        var_altura_caixa.set(str(dados.get("profundidade_caixa", CONFIG_PADRAO["profundidade_caixa"])))
+        var_altura_kinect.set(str(dados.get("altura_kinect", CONFIG_PADRAO["altura_kinect"])))
+        var_tolerancia.set(str(dados.get("tolerancia_cor", CONFIG_PADRAO["tolerancia_cor"])))
+        var_res_largura.set(str(dados.get("resolucao_largura", CONFIG_PADRAO["resolucao_largura"])))
+        var_res_altura.set(str(dados.get("resolucao_altura", CONFIG_PADRAO["resolucao_altura"])))
+        var_ransac_iter.set(str(dados.get("ransac_n_iter", CONFIG_PADRAO["ransac_n_iter"])))
+        var_ransac_limiar.set(str(dados.get("ransac_limiar_dist", CONFIG_PADRAO["ransac_limiar_dist"])))
+        var_grade_x.set(str(dados.get("celulas_grade_x", CONFIG_PADRAO["celulas_grade_x"])))
+        var_grade_y.set(str(dados.get("celulas_grade_y", CONFIG_PADRAO["celulas_grade_y"])))
+        var_raio_pa.set(str(dados.get("raio_pa_virtual", CONFIG_PADRAO["raio_pa_virtual"])))
+        var_intensidade_pa.set(str(dados.get("intensidade_pa_virtual", CONFIG_PADRAO["intensidade_pa_virtual"])))
+        var_forcar_sim.set(bool(dados.get("forcar_simulacao", False)))
+
+        ao_alternar_demo()
+        _atualizar_estado_geral()
+        messagebox.showinfo("Configuração Carregada", f"Configuração carregada de:\n{caminho}")
+
+    # ── Cabeçalho: título + troca de tema (linha 0) ──
+    frame_cabecalho = ctk.CTkFrame(root, fg_color="transparent")
+    frame_cabecalho.grid(row=0, column=0, sticky="ew", padx=20, pady=(16, 4))
+    frame_cabecalho.grid_columnconfigure(0, weight=1)
+
+    frame_titulo = ctk.CTkFrame(frame_cabecalho, fg_color="transparent")
+    frame_titulo.grid(row=0, column=0, sticky="w")
+    ctk.CTkLabel(
+        frame_titulo, text="AR SANDBOX — Caixão de Areia",
+        font=ctk.CTkFont(size=19, weight="bold"), anchor="w",
+    ).pack(anchor="w")
+    ctk.CTkLabel(
+        frame_titulo, text="Seção de Simulação — AMAN 2026",
+        font=ctk.CTkFont(size=12), text_color=("gray35", "gray65"), anchor="w",
+    ).pack(anchor="w")
+
+    def _ao_mudar_tema(escolha: str) -> None:
+        ctk.set_appearance_mode({"Claro": "Light", "Escuro": "Dark", "Sistema": "System"}[escolha])
+
+    seg_tema = ctk.CTkSegmentedButton(
+        frame_cabecalho, values=["Claro", "Escuro", "Sistema"], command=_ao_mudar_tema,
     )
-    frame_mapa.pack(padx=20, pady=(0, 5), fill="x")
+    seg_tema.set("Sistema")
+    seg_tema.grid(row=0, column=1, sticky="e")
 
-    lbl_caminho = tk.Label(
-        frame_mapa,
-        text="Nenhum arquivo selecionado",
-        font=("Segoe UI", 9),
-        fg="#999999",
-        wraplength=380,
-        anchor="w",
-        justify="left",
+    # ── Perfil: Salvar / Carregar Configuração (linha 1) ──
+    frame_perfil = ctk.CTkFrame(root, fg_color="transparent")
+    frame_perfil.grid(row=1, column=0, sticky="ew", padx=20, pady=(0, 8))
+    frame_perfil.grid_columnconfigure((0, 1), weight=1)
+    ctk.CTkButton(
+        frame_perfil, text="Carregar Configuração...", command=carregar_configuracao,
+        corner_radius=8, height=30, fg_color="gray40", hover_color="gray30",
+        font=ctk.CTkFont(size=12),
+    ).grid(row=0, column=0, sticky="ew", padx=(0, 5))
+    ctk.CTkButton(
+        frame_perfil, text="Salvar Configuração...", command=salvar_configuracao,
+        corner_radius=8, height=30, fg_color="gray40", hover_color="gray30",
+        font=ctk.CTkFont(size=12),
+    ).grid(row=0, column=1, sticky="ew", padx=(5, 0))
+
+    # ── Abas (linha 2, expande) ──
+    tabview = ctk.CTkTabview(root, corner_radius=12)
+    tabview.grid(row=2, column=0, sticky="nsew", padx=20, pady=(0, 8))
+    tab_mapa = tabview.add("Mapa Tático")
+    tab_dim = tabview.add("Dimensões Físicas")
+    tab_avancado = tabview.add("Simulação Avançada")
+
+    # ── Aba: Mapa Tático ──
+    card_mapa = ctk.CTkFrame(tab_mapa, corner_radius=10)
+    card_mapa.pack(fill="x", padx=6, pady=6)
+
+    lbl_caminho = ctk.CTkLabel(
+        card_mapa, text="Nenhum arquivo selecionado", font=ctk.CTkFont(size=12),
+        text_color=("gray45", "gray60"), wraplength=520, anchor="w", justify="left",
     )
 
     def selecionar_mapa():
         caminho = filedialog.askopenfilename(
             title="Selecionar Mapa Tático GeoTIFF",
-            filetypes=[
-                ("GeoTIFF", "*.tif *.tiff"),
-                ("Todos os arquivos", "*.*"),
-            ],
+            filetypes=[("GeoTIFF", "*.tif *.tiff"), ("Todos os arquivos", "*.*")],
         )
         if caminho:
             var_caminho.set(caminho)
-            lbl_caminho.config(text=caminho, fg="#1a1a1a")
-            if not var_demo.get():
-                btn_iniciar.config(state="normal")
+            lbl_caminho.configure(text=caminho, text_color=("gray10", "gray90"))
+            _atualizar_estado_geral()
 
-    btn_mapa = tk.Button(
-        frame_mapa,
-        text="Selecionar Mapa Tático (.TIF)",
-        command=selecionar_mapa,
-        font=("Segoe UI", 11),
-        padx=10,
-        pady=6,
-        cursor="hand2",
+    btn_mapa = ctk.CTkButton(
+        card_mapa, text="Selecionar Mapa Tático (.TIF)", command=selecionar_mapa,
+        corner_radius=8, height=38, font=ctk.CTkFont(size=13),
     )
-    btn_mapa.pack(fill="x")
-    lbl_caminho.pack(fill="x", pady=(5, 5))
+    btn_mapa.pack(fill="x", padx=14, pady=(14, 6))
+    lbl_caminho.pack(fill="x", padx=14, pady=(0, 10))
 
-    frame_tipo_mapa = tk.Frame(frame_mapa)
+    seg_tipo_mapa = ctk.CTkSegmentedButton(card_mapa, values=["Cubo Central", "Morro Gaussiano"])
 
     def _texto_demo() -> str:
         nome = "Cubo Central" if var_tipo_mapa.get() == TIPO_MAPA_CUBO else "Morro Gaussiano"
@@ -844,125 +1048,118 @@ def _abrir_gui_configuracao() -> Optional[dict]:
 
     def ao_alternar_demo():
         if var_demo.get():
-            btn_mapa.config(state="disabled")
-            lbl_caminho.config(text=_texto_demo(), fg="#2e7d32")
-            frame_tipo_mapa.pack(anchor="w", pady=(2, 0))
-            btn_iniciar.config(state="normal")
+            btn_mapa.configure(state="disabled")
+            lbl_caminho.configure(text=_texto_demo(), text_color=("#2e7d32", "#66bb6a"))
+            seg_tipo_mapa.pack(fill="x", padx=14, pady=(0, 14))
         else:
-            btn_mapa.config(state="normal")
-            frame_tipo_mapa.pack_forget()
+            btn_mapa.configure(state="normal")
+            seg_tipo_mapa.pack_forget()
             if var_caminho.get():
-                lbl_caminho.config(text=var_caminho.get(), fg="#1a1a1a")
-                btn_iniciar.config(state="normal")
+                lbl_caminho.configure(text=var_caminho.get(), text_color=("gray10", "gray90"))
             else:
-                lbl_caminho.config(
-                    text="Nenhum arquivo selecionado", fg="#999999",
-                )
-                btn_iniciar.config(state="disabled")
+                lbl_caminho.configure(text="Nenhum arquivo selecionado", text_color=("gray45", "gray60"))
+        _atualizar_estado_geral()
 
-    tk.Checkbutton(
-        frame_mapa,
-        text="Usar mapa de demonstração (sem arquivo .TIF)",
-        variable=var_demo,
-        command=ao_alternar_demo,
-        font=("Segoe UI", 9),
-    ).pack(anchor="w")
+    ctk.CTkSwitch(
+        card_mapa, text="Usar mapa de demonstração (sem arquivo .TIF)",
+        variable=var_demo, command=ao_alternar_demo, font=ctk.CTkFont(size=12),
+    ).pack(anchor="w", padx=14, pady=(0, 10))
 
-    def ao_escolher_tipo_mapa():
+    def ao_escolher_tipo_mapa(valor: str) -> None:
+        var_tipo_mapa.set(TIPO_MAPA_CUBO if valor == "Cubo Central" else TIPO_MAPA_GAUSSIANA)
         if var_demo.get():
-            lbl_caminho.config(text=_texto_demo(), fg="#2e7d32")
+            lbl_caminho.configure(text=_texto_demo(), text_color=("#2e7d32", "#66bb6a"))
 
-    tk.Radiobutton(
-        frame_tipo_mapa,
-        text="Cubo Central (platô quadrado)",
-        variable=var_tipo_mapa,
-        value=TIPO_MAPA_CUBO,
-        command=ao_escolher_tipo_mapa,
-        font=("Segoe UI", 9),
-    ).pack(anchor="w")
-    tk.Radiobutton(
-        frame_tipo_mapa,
-        text="Morro Gaussiano (monte suave)",
-        variable=var_tipo_mapa,
-        value=TIPO_MAPA_GAUSSIANA,
-        command=ao_escolher_tipo_mapa,
-        font=("Segoe UI", 9),
-    ).pack(anchor="w")
+    seg_tipo_mapa.configure(command=ao_escolher_tipo_mapa)
+    seg_tipo_mapa.set("Cubo Central" if var_tipo_mapa.get() == TIPO_MAPA_CUBO else "Morro Gaussiano")
 
-    # ── Seção: Dimensões da Mesa ──
-    frame_mesa = tk.LabelFrame(
-        root,
-        text="  Dimensões da Mesa (metros)  ",
-        font=("Segoe UI", 11, "bold"),
-        padx=15,
-        pady=10,
+    # ── Aba: Dimensões Físicas (grade 2 colunas) ──
+    card_dim = ctk.CTkFrame(tab_dim, corner_radius=10)
+    card_dim.pack(fill="x", padx=6, pady=6)
+    card_dim.grid_columnconfigure((0, 1), weight=1)
+
+    _registrar_campo(card_dim, 0, 0, "Largura da Mesa — X (m)", var_largura, "largura_mesa", "Largura da mesa")
+    _registrar_campo(card_dim, 0, 1, "Comprimento da Mesa — Y (m)", var_comprimento, "comprimento_mesa", "Comprimento da mesa")
+    _registrar_campo(card_dim, 1, 0, "Profundidade da Caixa — Z (m)", var_altura_caixa, "profundidade_caixa", "Profundidade da caixa")
+    _registrar_campo(card_dim, 1, 1, "Altura de Montagem do Kinect (m)", var_altura_kinect, "altura_kinect", "Altura do Kinect")
+    _registrar_campo(card_dim, 2, 0, "Tolerância de Cor — ± (m)", var_tolerancia, "tolerancia_cor", "Tolerância de cor")
+
+    # ── Aba: Simulação Avançada (scrollable, grade 2 colunas) ──
+    card_avancado = ctk.CTkScrollableFrame(tab_avancado, corner_radius=10, label_text="")
+    card_avancado.pack(fill="both", expand=True, padx=6, pady=6)
+    card_avancado.grid_columnconfigure((0, 1), weight=1)
+
+    _registrar_campo(card_avancado, 0, 0, "Resolução do Projetor — Largura (px)", var_res_largura, "resolucao_largura", "Resolução (largura)", inteiro=True)
+    _registrar_campo(card_avancado, 0, 1, "Resolução do Projetor — Altura (px)", var_res_altura, "resolucao_altura", "Resolução (altura)", inteiro=True)
+    _registrar_campo(card_avancado, 1, 0, "Malha — Colunas (eixo X)", var_grade_x, "celulas_grade_x", "Colunas da malha", inteiro=True)
+    _registrar_campo(card_avancado, 1, 1, "Malha — Linhas (eixo Y)", var_grade_y, "celulas_grade_y", "Linhas da malha", inteiro=True)
+    _registrar_campo(card_avancado, 2, 0, "RANSAC — Iterações", var_ransac_iter, "ransac_n_iter", "Iterações do RANSAC", inteiro=True)
+    _registrar_campo(card_avancado, 2, 1, "RANSAC — Limiar de Inlier (m)", var_ransac_limiar, "ransac_limiar_dist", "Limiar de inlier do RANSAC")
+    _registrar_campo(card_avancado, 3, 0, "Pá Virtual — Raio (m)", var_raio_pa, "raio_pa_virtual", "Raio da pá virtual")
+    _registrar_campo(card_avancado, 3, 1, "Pá Virtual — Intensidade (m)", var_intensidade_pa, "intensidade_pa_virtual", "Intensidade da pá virtual")
+
+    ctk.CTkSwitch(
+        card_avancado, text="Forçar Modo Simulação (ignorar Kinect conectado)",
+        variable=var_forcar_sim, font=ctk.CTkFont(size=12),
+    ).grid(row=4, column=0, columnspan=2, sticky="w", padx=8, pady=(10, 4))
+
+    # ── Rodapé fixo: erro + botão INICIAR (linha 3, sempre visível) ──
+    frame_rodape = ctk.CTkFrame(root, fg_color="transparent")
+    frame_rodape.grid(row=3, column=0, sticky="ew", padx=20, pady=(0, 16))
+    frame_rodape.grid_columnconfigure(0, weight=1)
+
+    lbl_erro = ctk.CTkLabel(
+        frame_rodape, text="", font=ctk.CTkFont(size=12, weight="bold"),
+        text_color=("#c62828", "#ef9a9a"), wraplength=580, justify="left", anchor="w",
     )
-    frame_mesa.pack(padx=20, pady=10, fill="x")
+    lbl_erro.grid(row=0, column=0, sticky="ew", pady=(0, 8))
 
-    for i, (rotulo, var) in enumerate([
-        ("Largura (X):", var_largura),
-        ("Comprimento (Y):", var_comprimento),
-        ("Profundidade da Caixa (Z):", var_altura),
-    ]):
-        tk.Label(
-            frame_mesa, text=rotulo, font=("Segoe UI", 10),
-        ).grid(row=i, column=0, sticky="w", pady=4)
-        tk.Entry(
-            frame_mesa,
-            textvariable=var,
-            font=("Segoe UI", 10),
-            width=10,
-            justify="center",
-        ).grid(row=i, column=1, padx=(15, 0), pady=4)
-
-    # ── Botão INICIAR ──
     def iniciar():
-        try:
-            largura = float(var_largura.get())
-            comprimento = float(var_comprimento.get())
-            altura = float(var_altura.get())
-        except ValueError:
-            messagebox.showerror(
-                "Valores Inválidos",
-                "As dimensões da mesa devem ser números decimais.\n"
-                "Exemplo: 1.50",
-            )
-            return
-        if largura <= 0 or comprimento <= 0 or altura <= 0:
-            messagebox.showerror(
-                "Valores Inválidos",
-                "Todas as dimensões devem ser maiores que zero.",
-            )
-            return
-
-        resultado["caminho_geotiff"] = (
-            "" if var_demo.get() else var_caminho.get()
-        )
-        resultado["largura_mesa"] = largura
-        resultado["comprimento_mesa"] = comprimento
-        resultado["profundidade_caixa"] = altura
+        # Os campos já foram validados em tempo real (trace_add) — aqui
+        # apenas convertemos, já que btn_iniciar só fica habilitado
+        # quando todas as mensagens de erro estão vazias.
+        resultado["caminho_geotiff"] = "" if var_demo.get() else var_caminho.get()
         resultado["tipo_mapa"] = var_tipo_mapa.get()
+        resultado["largura_mesa"] = float(var_largura.get())
+        resultado["comprimento_mesa"] = float(var_comprimento.get())
+        resultado["profundidade_caixa"] = float(var_altura_caixa.get())
+        resultado["altura_kinect"] = float(var_altura_kinect.get())
+        resultado["tolerancia_cor"] = float(var_tolerancia.get())
+        resultado["resolucao_largura"] = int(var_res_largura.get())
+        resultado["resolucao_altura"] = int(var_res_altura.get())
+        resultado["ransac_n_iter"] = int(var_ransac_iter.get())
+        resultado["ransac_limiar_dist"] = float(var_ransac_limiar.get())
+        resultado["celulas_grade_x"] = int(var_grade_x.get())
+        resultado["celulas_grade_y"] = int(var_grade_y.get())
+        resultado["raio_pa_virtual"] = float(var_raio_pa.get())
+        resultado["intensidade_pa_virtual"] = float(var_intensidade_pa.get())
+        resultado["forcar_simulacao"] = var_forcar_sim.get()
         root.destroy()
 
-    btn_iniciar = tk.Button(
-        root,
-        text="INICIAR SIMULAÇÃO",
-        command=iniciar,
-        font=("Segoe UI", 14, "bold"),
-        padx=20,
-        pady=12,
+    btn_iniciar = ctk.CTkButton(
+        frame_rodape, text="INICIAR SIMULAÇÃO", command=iniciar,
+        font=ctk.CTkFont(size=16, weight="bold"), height=46, corner_radius=10,
+        fg_color=_COR_ACCENT_INICIAR, hover_color=_COR_ACCENT_INICIAR_HOVER,
         state="disabled",
-        cursor="hand2",
     )
-    btn_iniciar.pack(pady=(5, 20), padx=20, fill="x")
+    btn_iniciar.grid(row=1, column=0, sticky="ew")
+
+    # ── Validação inicial (agora que lbl_erro e btn_iniciar existem) ──
+    _atualizar_estado_geral()
 
     # ── Centralizar janela na tela ──
+    # ``tk::PlaceWindow`` (utilitário nativo do Tk) em vez de calcular
+    # x/y na mão a partir de winfo_screenwidth/height: em setups com
+    # múltiplos monitores essas chamadas podem refletir a área de
+    # trabalho virtual combinada (não o monitor onde a janela realmente
+    # abre), o que already empurrou o rodapé (mensagem de erro + botão
+    # INICIAR) para fora da tela visível em testes — o utilitário nativo
+    # centraliza corretamente em relação ao monitor de fato usado.
     root.update_idletasks()
-    w = root.winfo_reqwidth()
-    h = root.winfo_reqheight()
-    x = (root.winfo_screenwidth() - w) // 2
-    y = (root.winfo_screenheight() - h) // 2
-    root.geometry(f"+{x}+{y}")
+    try:
+        root.eval(f"tk::PlaceWindow {root} center")
+    except tk.TclError:
+        pass  # fallback: mantém a posição padrão do gerenciador de janelas
 
     root.protocol("WM_DELETE_WINDOW", root.destroy)
     root.mainloop()
@@ -989,10 +1186,24 @@ def main() -> None:
         sys.exit(0)
 
     global CAMINHO_GEOTIFF, LARGURA_MESA, COMPRIMENTO_MESA, PROFUNDIDADE_CAIXA
+    global ALTURA_KINECT, TOLERANCIA_COR, RESOLUCAO_PROJETOR
+    global RANSAC_N_ITER, RANSAC_LIMIAR_DIST, CELULAS_GRADE_X, CELULAS_GRADE_Y
+    global RAIO_PA_VIRTUAL, INTENSIDADE_PA_VIRTUAL, FORCAR_SIMULACAO
+
     CAMINHO_GEOTIFF = config["caminho_geotiff"]
     LARGURA_MESA = config["largura_mesa"]
     COMPRIMENTO_MESA = config["comprimento_mesa"]
     PROFUNDIDADE_CAIXA = config["profundidade_caixa"]
+    ALTURA_KINECT = config["altura_kinect"]
+    TOLERANCIA_COR = config["tolerancia_cor"]
+    RESOLUCAO_PROJETOR = (config["resolucao_largura"], config["resolucao_altura"])
+    RANSAC_N_ITER = config["ransac_n_iter"]
+    RANSAC_LIMIAR_DIST = config["ransac_limiar_dist"]
+    CELULAS_GRADE_X = config["celulas_grade_x"]
+    CELULAS_GRADE_Y = config["celulas_grade_y"]
+    RAIO_PA_VIRTUAL = config["raio_pa_virtual"]
+    INTENSIDADE_PA_VIRTUAL = config["intensidade_pa_virtual"]
+    FORCAR_SIMULACAO = config["forcar_simulacao"]
     TIPO_MAPA_INICIAL = config.get("tipo_mapa", TIPO_MAPA_CUBO)
 
     print()
