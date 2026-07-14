@@ -216,6 +216,24 @@ def ajustar_plano_ransac(
 # 1b. BACK-PROJECTION PINHOLE — Profundidade → Nuvem 3D (convenção da mesa)
 # ============================================================================
 
+_CACHE_INDICES_PIXEL: dict = {}
+"""Cache de ``(u_idx, v_idx)`` por resolução (H, W), usado em
+``profundidade_para_nuvem_mesa``.  A grade de índices de pixel não muda
+enquanto a resolução do sensor for a mesma — só existem 1-2 resoluções
+possíveis por sessão (Kinect v1 ou v2), então recriar dois arrays HxW a
+cada frame (30x/s) é alocação e trabalho de CPU sem necessidade."""
+
+
+def _obter_indices_pixel(h: int, w: int) -> Tuple[np.ndarray, np.ndarray]:
+    chave = (h, w)
+    indices = _CACHE_INDICES_PIXEL.get(chave)
+    if indices is None:
+        v_idx, u_idx = np.indices((h, w))
+        indices = (u_idx.astype(np.float64), v_idx.astype(np.float64))
+        _CACHE_INDICES_PIXEL[chave] = indices
+    return indices
+
+
 def profundidade_para_nuvem_mesa(
     profundidade_mm: np.ndarray,
     fx: float,
@@ -269,14 +287,14 @@ def profundidade_para_nuvem_mesa(
         ``pipeline_plano_e_base`` / ``transformar_pontos``.
     """
     h, w = profundidade_mm.shape
-    v_idx, u_idx = np.indices((h, w))
+    u_idx, v_idx = _obter_indices_pixel(h, w)
 
     Z_real = profundidade_mm.astype(np.float64) / 1000.0  # profundidade verdadeira (m)
     mascara = (Z_real > alcance_min) & (Z_real < alcance_max)
 
     Z_m = Z_real[mascara]
-    u_m = u_idx[mascara].astype(np.float64)
-    v_m = v_idx[mascara].astype(np.float64)
+    u_m = u_idx[mascara]
+    v_m = v_idx[mascara]
 
     X_m = (u_m - cx) * Z_m / fx
     Y_m = (v_m - cy) * Z_m / fy
@@ -400,10 +418,11 @@ def transformar_pontos(T: np.ndarray, pontos: np.ndarray) -> np.ndarray:
     np.ndarray, shape (N, 3)
         Pontos no referencial da mesa.
     """
-    N = pontos.shape[0]
-    homogeneos = np.hstack([pontos, np.ones((N, 1))])   # (N, 4)
-    transformados = (T @ homogeneos.T).T                 # (N, 4)
-    return transformados[:, :3]
+    # Equivalente a homogeneizar [x,y,z,1] e multiplicar por T, mas evita
+    # alocar a coluna extra de 1s e a multiplicação pela última linha de T
+    # (sempre [0,0,0,1]) — ~25% menos FLOPs e uma alocação a menos por
+    # frame, relevante a 30 Hz numa CPU sem AVX/FMA dedicado.
+    return pontos @ T[:3, :3].T + T[:3, 3]
 
 
 # ============================================================================
@@ -832,9 +851,6 @@ def discretizar_nuvem_em_grade(
     tam_celula_x = largura_mesa / n_celulas_x
     tam_celula_y = comprimento_mesa / n_celulas_y
 
-    soma_z = np.zeros((n_celulas_y, n_celulas_x), dtype=np.float64)
-    contagens = np.zeros((n_celulas_y, n_celulas_x), dtype=np.int32)
-
     x = pontos_mesa[:, 0]
     y = pontos_mesa[:, 1]
     z = pontos_mesa[:, 2]
@@ -851,15 +867,77 @@ def discretizar_nuvem_em_grade(
     col = np.clip((x / tam_celula_x).astype(np.int32), 0, n_celulas_x - 1)
     lin = np.clip((y / tam_celula_y).astype(np.int32), 0, n_celulas_y - 1)
 
-    # Acumulação vetorizada
-    np.add.at(soma_z, (lin, col), z)
-    np.add.at(contagens, (lin, col), 1)
+    # Acumulação por célula via bincount sobre um índice linear (lin*n_x+col).
+    # np.add.at é conhecido por ser lento (não bufferizado); com nuvens de
+    # ~300 mil pontos por frame (Kinect 640x480), bincount é várias vezes
+    # mais rápido pois usa um caminho interno em C vetorizado.
+    n_celulas = n_celulas_y * n_celulas_x
+    indices = lin * n_celulas_x + col
+    soma_z = np.bincount(indices, weights=z, minlength=n_celulas).reshape(
+        n_celulas_y, n_celulas_x
+    )
+    contagens = np.bincount(indices, minlength=n_celulas).astype(
+        np.int32
+    ).reshape(n_celulas_y, n_celulas_x)
 
     alturas = np.full((n_celulas_y, n_celulas_x), np.nan, dtype=np.float64)
     mascara = contagens > 0
     alturas[mascara] = soma_z[mascara] / contagens[mascara]
 
     return alturas, contagens
+
+
+_CACHE_VERTICES_GRADE: dict = {}
+"""Cache de vértices 2D projetados por ``gerar_imagem_grade_cores``.
+
+A projeção Tsai dos vértices da malha (via ``cv2.projectPoints``) depende
+apenas da calibração ativa e das dimensões da grade — nunca da nuvem de
+pontos do frame atual.  Durante o AR_LOOP a calibração fica fixa por
+milhares de frames seguidos, então recalcular essa projeção a cada frame
+(como fazia a versão anterior) é trabalho puramente redundante.  O cache é
+indexado pelos bytes dos parâmetros (baratos de gerar para arrays desse
+tamanho) para que uma recalibração ([C]) invalide automaticamente a
+entrada antiga.  Limitado a poucas entradas — não cresce sem controle
+mesmo que os parâmetros mudem com frequência incomum.
+"""
+
+
+def _obter_vertices_grade_projetados(
+    n_celulas_x: int,
+    n_celulas_y: int,
+    largura_mesa: float,
+    comprimento_mesa: float,
+    rvec: np.ndarray,
+    tvec: np.ndarray,
+    camera_matrix: np.ndarray,
+    dist_coeffs: np.ndarray,
+) -> np.ndarray:
+    """Projeta (com cache) os vértices da malha via Tsai — ver
+    ``_CACHE_VERTICES_GRADE`` para a justificativa do cache."""
+    chave = (
+        n_celulas_x, n_celulas_y, largura_mesa, comprimento_mesa,
+        rvec.tobytes(), tvec.tobytes(),
+        camera_matrix.tobytes(), dist_coeffs.tobytes(),
+    )
+    vertices_2d = _CACHE_VERTICES_GRADE.get(chave)
+    if vertices_2d is not None:
+        return vertices_2d
+
+    xs = np.linspace(0.0, largura_mesa, n_celulas_x + 1)
+    ys = np.linspace(0.0, comprimento_mesa, n_celulas_y + 1)
+    xx, yy = np.meshgrid(xs, ys)
+    vertices_3d = np.column_stack([
+        xx.ravel(), yy.ravel(), np.zeros(xx.size)
+    ])  # (V, 3) com Z = 0 (plano da mesa)
+
+    vertices_2d = projetar_pontos_tsai(
+        vertices_3d, rvec, tvec, camera_matrix, dist_coeffs,
+    ).reshape(n_celulas_y + 1, n_celulas_x + 1, 2)  # indexável por [lin, col]
+
+    if len(_CACHE_VERTICES_GRADE) > 8:  # defesa contra crescimento ilimitado
+        _CACHE_VERTICES_GRADE.clear()
+    _CACHE_VERTICES_GRADE[chave] = vertices_2d
+    return vertices_2d
 
 
 def gerar_imagem_grade_cores(
@@ -951,21 +1029,12 @@ def gerar_imagem_grade_cores(
     tam_celula_x = largura_mesa / n_celulas_x
     tam_celula_y = comprimento_mesa / n_celulas_y
 
-    # ── 2. Projeção em lote dos vértices da grade ──
-    # A grade tem (n_celulas_y + 1) × (n_celulas_x + 1) vértices.
-    xs = np.linspace(0.0, largura_mesa, n_celulas_x + 1)
-    ys = np.linspace(0.0, comprimento_mesa, n_celulas_y + 1)
-    xx, yy = np.meshgrid(xs, ys)
-    vertices_3d = np.column_stack([
-        xx.ravel(), yy.ravel(), np.zeros(xx.size)
-    ])  # (V, 3) com Z = 0 (plano da mesa)
-
-    vertices_2d = projetar_pontos_tsai(
-        vertices_3d, rvec, tvec, camera_matrix, dist_coeffs,
-    )  # (V, 2)
-    vertices_2d = vertices_2d.reshape(
-        n_celulas_y + 1, n_celulas_x + 1, 2
-    )  # indexável por [lin, col]
+    # ── 2. Projeção em lote dos vértices da grade (cacheada — ver
+    #      ``_obter_vertices_grade_projetados``: só muda ao recalibrar) ──
+    vertices_2d = _obter_vertices_grade_projetados(
+        n_celulas_x, n_celulas_y, largura_mesa, comprimento_mesa,
+        rvec, tvec, camera_matrix, dist_coeffs,
+    )
 
     # ── 3. Coloração vetorizada da grade inteira ──
     # Centros de célula, shape (n_celulas_y, n_celulas_x)
@@ -990,21 +1059,34 @@ def gerar_imagem_grade_cores(
 
     cores_grade = cor_por_diferenca_vetorizado(alturas, z_mde_grade, tolerancia)
 
-    # ── 4. Rasterização — um fillPoly por célula com dados ──
-    for i in range(n_celulas_y):
-        for j in range(n_celulas_x):
-            if contagens[i, j] == 0:
-                continue  # sem dados do Kinect nesta célula
+    # ── 4. Rasterização — um fillPoly por COR (não por célula) ──
+    # cv2.fillPoly aceita uma lista de polígonos e os desenha todos com a
+    # mesma cor numa única chamada.  Como só há 3 cores possíveis
+    # (vermelho/azul/verde), agrupar as ~n_celulas_x*n_celulas_y células
+    # por cor reduz as chamadas a cv2 de centenas por frame para no
+    # máximo 3 — o overhead por chamada do OpenCV (validação de buffer,
+    # conversão de tipos) domina o custo quando os polígonos são pequenos,
+    # então isso é o ganho de desempenho mais significativo desta função.
+    mascara_com_dados = contagens > 0
+    if np.any(mascara_com_dados):
+        # Quads de cada célula construídos por fatiamento vetorizado
+        # (sem laço Python), a partir dos 4 cantos em vertices_2d.
+        v00 = vertices_2d[:-1, :-1]
+        v01 = vertices_2d[:-1, 1:]
+        v11 = vertices_2d[1:, 1:]
+        v10 = vertices_2d[1:, :-1]
+        quads = np.stack([v00, v01, v11, v10], axis=2).astype(np.int32)
 
-            pts = np.array([
-                vertices_2d[i,     j    ],
-                vertices_2d[i,     j + 1],
-                vertices_2d[i + 1, j + 1],
-                vertices_2d[i + 1, j    ],
-            ], dtype=np.int32).reshape((-1, 1, 2))
+        quads_validos = quads[mascara_com_dados]        # (M, 4, 2)
+        cores_validas = cores_grade[mascara_com_dados]   # (M, 3)
 
-            cor = tuple(int(c) for c in cores_grade[i, j])
-            cv2.fillPoly(imagem, [pts], cor)
+        cores_unicas, grupo = np.unique(
+            cores_validas, axis=0, return_inverse=True
+        )
+        grupo = grupo.reshape(-1)
+        for k, cor in enumerate(cores_unicas):
+            contornos = list(quads_validos[grupo == k].reshape(-1, 4, 1, 2))
+            cv2.fillPoly(imagem, contornos, tuple(int(c) for c in cor))
 
     return imagem
 

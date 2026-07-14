@@ -678,9 +678,14 @@ def _desenhar_legenda_hud(
     # Painel semi-transparente (fundo escuro atrás do texto) via
     # cv2.addWeighted, que combina overlay e imagem original pixel a
     # pixel (alpha blending), preservando a visão da grade AR por trás.
-    overlay = imagem.copy()
-    cv2.rectangle(overlay, (x0, y0), (x1, y1), (30, 30, 30), -1)
-    cv2.addWeighted(overlay, 0.65, imagem, 0.35, 0, dst=imagem)
+    # Recorta apenas a região do HUD (ROI) antes de copiar/misturar — a
+    # versão anterior copiava e misturava o frame inteiro (ex.: 640×480)
+    # só para escurever um retângulo pequeno no canto, desperdiçando
+    # CPU/memória a cada frame nesta janela de controle.
+    roi = imagem[y0:y1, x0:x1]
+    overlay = roi.copy()
+    cv2.rectangle(overlay, (0, 0), (x1 - x0, y1 - y0), (30, 30, 30), -1)
+    cv2.addWeighted(overlay, 0.65, roi, 0.35, 0, dst=roi)
     cv2.rectangle(imagem, (x0, y0), (x1, y1), (200, 200, 200), 1)
 
     y = y0 + altura_linha

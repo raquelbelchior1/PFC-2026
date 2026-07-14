@@ -65,8 +65,10 @@ for _stream in (sys.stdout, sys.stderr):
 
 try:
     import rasterio
+    from rasterio.enums import Resampling
 except ImportError:
     rasterio = None  # type: ignore[assignment]
+    Resampling = None  # type: ignore[assignment]
 
 try:
     from scipy.interpolate import RegularGridInterpolator
@@ -83,6 +85,17 @@ except ImportError:
 # geometria gerada acompanhe as dimensões físicas reais da mesa ativa
 # (definidas na GUI de configuração / calibração), permanecendo alinhada
 # ao caixão físico qualquer que seja o seu tamanho.
+
+MAX_RESOLUCAO_MDE: int = 500
+"""Teto de resolução (pixels por eixo) lida de um GeoTIFF.  A consulta
+real (``obter_z_alvo``) só é feita nos centros de uma grade de poucas
+dezenas de células (ex.: 30×30) e a visualização é redimensionada para o
+tamanho da janela (ex.: 640×480) — um GeoTIFF de cartografia real pode
+ter dezenas de milhões de pixels, e materializar isso inteiro como
+float32 (dezenas a centenas de MB) para depois nunca consultar mais que
+essa poucas centenas de pontos é desperdício de RAM puro num PC de baixo
+custo.  ``rasterio`` decodifica a imagem já reduzida (decimated read),
+então essa memória nunca chega a ser alocada."""
 
 TIPO_MAPA_CUBO: str = "cubo"
 TIPO_MAPA_GAUSSIANA: str = "gaussiana"
@@ -372,14 +385,30 @@ class AdaptadorMDE:
             )
 
         # 1. Leitura da primeira banda — converter para float32
+        #    Lida já reduzida (decimated read) quando o GeoTIFF excede
+        #    MAX_RESOLUCAO_MDE por eixo: ver a constante acima para a
+        #    justificativa (só interessam os centros de uma grade de
+        #    poucas dezenas de células, nunca a resolução original).
+        #    Resampling.nearest preserva os valores originais de pixel
+        #    (inclusive sentinelas de nodata), evitando que a média/
+        #    bilinear do resample contamine elevações válidas com o
+        #    valor de nodata perto das bordas.
         with rasterio.open(caminho) as src:
-            elevacoes = src.read(1).astype(np.float32)  # (linhas, colunas)
+            largura_original, altura_original = src.width, src.height
+            out_h = min(altura_original, MAX_RESOLUCAO_MDE)
+            out_w = min(largura_original, MAX_RESOLUCAO_MDE)
+            elevacoes = src.read(
+                1,
+                out_shape=(out_h, out_w),
+                resampling=Resampling.nearest,
+            ).astype(np.float32)  # (linhas, colunas)
             self._resolucao_geotiff = src.res             # (res_x, res_y)
             nodata = src.nodata
             dtype_original = src.dtypes[0]
 
         print(f"[MDE] Banda lida: dtype original={dtype_original}, "
-              f"nodata={nodata}, shape={elevacoes.shape}")
+              f"nodata={nodata}, shape original={(altura_original, largura_original)}, "
+              f"shape carregado={elevacoes.shape}")
 
         # Tratar pixels sem dado: substituir pelo mínimo válido do terreno
         mascara_valida = np.ones(elevacoes.shape, dtype=bool)

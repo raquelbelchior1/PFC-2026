@@ -510,6 +510,12 @@ class KinectSensor:
         z_inicial = -self._profundidade_caixa / 2.0
         self._eixo_x_sim = np.linspace(0.0, self._largura_mesa,     res)
         self._eixo_y_sim = np.linspace(0.0, self._comprimento_mesa, res)
+        # Cacheados uma única vez: os eixos são fixos pela sessão inteira,
+        # então recalcular o meshgrid a cada evento de mouse e a cada
+        # frame (em ``modificar_areia``/``_nuvem_simulada_mesa``) seria
+        # trabalho repetido e desnecessário — o mouse pode disparar
+        # dezenas de eventos por segundo durante o arraste.
+        self._xx_sim, self._yy_sim = np.meshgrid(self._eixo_x_sim, self._eixo_y_sim)
         self._grade_areia = np.full(
             (res, res),
             z_inicial,
@@ -549,7 +555,7 @@ class KinectSensor:
         if self._grade_areia is None:
             return
 
-        xx, yy = np.meshgrid(self._eixo_x_sim, self._eixo_y_sim)
+        xx, yy = self._xx_sim, self._yy_sim
         dist2  = (xx - x) ** 2 + (yy - y) ** 2
         sigma2 = (raio / 2.0) ** 2
 
@@ -565,10 +571,9 @@ class KinectSensor:
 
     def _nuvem_simulada_mesa(self) -> np.ndarray:
         """Nuvem de pontos a partir da grade persistente (coordenadas da mesa)."""
-        xx, yy = np.meshgrid(self._eixo_x_sim, self._eixo_y_sim)
         return np.column_stack([
-            xx.ravel(),
-            yy.ravel(),
+            self._xx_sim.ravel(),
+            self._yy_sim.ravel(),
             self._grade_areia.ravel(),
         ])
 
