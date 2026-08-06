@@ -30,38 +30,45 @@ O sistema exibe **duas janelas simultâneas**:
 | **Projecao_Areia** | Grade contínua de quadrados coloridos (vermelho/azul/verde) — enviada ao projetor |
 | **Gabarito_MDE** | Heatmap de referência do MDE sendo replicado — monitor do operador |
 
-### Calibração da Tampa ("Lid Calibration") — uma única vez
+### Calibração — dois modos, cota zero na BASE do caixão
 
-A mesa é calibrada **uma única vez**, colocando-se uma **tampa lisa e plana** sobre toda a área do caixão. Essa tampa representa o plano de referência $Z_{mesa} = 0{,}0\text{ m}$ (nível máximo de areia). O campo de visão do Kinect, porém, é **mais largo** que o caixão: a nuvem capturada inclui também a moldura de madeira, o piso ao redor e ruído da sala — outliers que não pertencem ao plano da tampa. Por isso o ajuste de plano usa **RANSAC** para isolar o maior conjunto de pontos coplanares (a tampa) antes de refinar a normal com **SVD** apenas sobre esses inliers.
+A mesa é calibrada **uma única vez**, aplicando **RANSAC** sobre a nuvem de pontos de uma superfície plana de referência. O modo é escolhido na aba **"Calibração"** da GUI:
+
+- **Tampa sobre as bordas (oficial, recomendado)** — o operador apoia uma **tampa plana e opaca** sobre as bordas, cobrindo totalmente o caixão. Isso evita distorções matemáticas geradas por areia irregular. A **cota zero** (base de madeira) é derivada do plano da tampa descendo a "Profundidade do caixão" informada na GUI.
+- **Base vazia do caixão** — o caixão é esvaziado e o RANSAC detecta o plano da própria base de madeira, que vira a cota zero diretamente.
+
+O campo de visão do Kinect é **mais largo** que o caixão: a nuvem capturada inclui também a moldura de madeira, o piso ao redor e ruído da sala — outliers que não pertencem ao plano de referência. Por isso o ajuste de plano usa **RANSAC** para isolar o maior conjunto de pontos coplanares antes de refinar a normal com **SVD** apenas sobre esses inliers, extraindo a equação do plano $ax + by + cz + d = 0$.
 
 Ao pressionar **[C]**, o sistema:
-1. Captura a nuvem de pontos (tampa + possível moldura/piso/ruído).
-2. Roda **RANSAC** (1000 iterações, limiar de inlier 3 cm — `ajustar_plano_ransac`) para isolar o plano dominante da tampa, descartando outliers.
+1. Captura a nuvem de pontos (plano de referência + possível moldura/piso/ruído).
+2. Roda **RANSAC** (1000 iterações, limiar de inlier 3 cm — `ajustar_plano_ransac`) para isolar o plano dominante, descartando outliers.
 3. Ajusta o plano dos inliers por **SVD** (mínimos quadráticos) e extrai o vetor normal.
-4. Constrói uma base ortonormal por **Gram-Schmidt**.
-5. Monta a matriz de transformação $T_{final}$ (4×4), deslocando o centro do plano detectado para $(L_x/2,\, L_y/2,\, 0)$.
-6. **Salva `T_final` em `calibration_data.json`.**
+4. **Valida a distância medida** sensor→plano contra o campo "Distância do Kinect até a Tampa de Calibração (cm)" da GUI — divergência acima de 15 cm aborta com uma mensagem explicando o que conferir.
+5. Constrói uma base ortonormal por **Gram-Schmidt**.
+6. Monta a matriz de transformação $T_{final}$ (4×4), deslocando o centro do plano detectado para $(L_x/2,\, L_y/2)$ e a cota zero para a **base de madeira** (no modo tampa, $+profundidade\_caixa$ em Z).
+7. **Salva `T_final` + metadados (modo, equação do plano) em `calibration_data.json` (esquema v2).**
+8. No modo tampa, exibe **"RETIRE A TAMPA"** em tela cheia e aguarda confirmação antes de iniciar o AR.
 
-Nas próximas execuções, esse arquivo é **carregado automaticamente** e a calibração manual é **pulada** — a tecla **[C]** continua disponível a qualquer momento para recalibrar (por exemplo, após reposicionar o sensor).
+Nas próximas execuções, esse arquivo é **carregado automaticamente** e a calibração manual é **pulada** — a tecla **[C]** continua disponível a qualquer momento para recalibrar (por exemplo, após reposicionar o sensor). Caches do esquema antigo (convenção de Z anterior) são descartados automaticamente.
 
-### Faixa de Profundidade da Areia
+### Faixa de Altura da Areia (alturas positivas, para cima)
 
-Com a tampa removida, a areia ocupa sempre:
+Após a calibração, a areia ocupa sempre:
 
-$$Z_{mesa} \in [-0{,}20\text{ m},\; 0{,}0\text{ m}]$$
+$$Z_{mesa} \in [0{,}0\text{ m},\; +0{,}20\text{ m}]$$
 
-- $Z_{mesa} = 0{,}0$ m → nível da tampa (máximo de areia possível, caixa cheia até a borda)
-- $Z_{mesa} = -0{,}20$ m → fundo físico do caixão (20 cm de profundidade, sem areia)
+- $Z_{mesa} = 0{,}0$ m → **base de madeira vazia** (cota zero da calibração)
+- $Z_{mesa} = +0{,}20$ m → borda superior do caixão (nível da tampa; máximo de areia possível)
 
-Todos os cálculos de profundidade, mapeamento de coordenadas e classificação de cores respeitam rigorosamente essa faixa negativa.
+Todos os cálculos de altura, mapeamento de coordenadas e classificação de cores respeitam rigorosamente essa faixa positiva. As formas dos mapas alvo são **volumes positivos** que se projetam **para cima** do plano de referência — um cubo é um bloco elevado, nunca um buraco.
 
 ### Resiliência Total — Zero Crash na Apresentação
 
 O sistema é **100% Plug & Play**: funciona em qualquer máquina, com ou sem hardware.
 
-- **Sem Kinect?** → O `KinectSensor` entra em **Modo Simulação Interativo** com uma grade persistente de alturas inicializada em **-10 cm** (meio da profundidade). O usuário pode **cavar** e **preencher** a areia virtual usando o **mouse** (veja seção abaixo).
-- **Sem GeoTIFF?** → O `AdaptadorMDE` gera automaticamente o mapa sintético **"Cubo Central"**: um platô de 50×50 cm a $Z=-0{,}10$ m (10 cm acima do fundo), e $Z=-0{,}20$ m (fundo) no restante da mesa — geometria fácil de reproduzir fisicamente para testes com a banca.
-- **Sem `calibration_data.json`?** → O sistema aguarda a tecla **[C]** normalmente (calibração manual com a tampa).
+- **Sem Kinect?** → O `KinectSensor` entra em **Modo Simulação Interativo** com uma grade persistente de alturas inicializada em **0 cm** (caixão vazio — o Passo A do teste de aceitação). O usuário pode **cavar** e **preencher** a areia virtual usando o **mouse** (veja seção abaixo).
+- **Sem GeoTIFF?** → O `AdaptadorMDE` gera automaticamente o mapa sintético **"Cubo Central"**: um bloco de 50×50 cm a $Z=+0{,}10$ m (10 cm **acima da base**), e $Z=0{,}0$ m (base vazia) no restante da mesa — geometria fácil de reproduzir fisicamente com um cubo real para testes com a banca.
+- **Sem `calibration_data.json`?** → O sistema aguarda a tecla **[C]** normalmente (calibração manual guiada pelo passo a passo on-screen).
 
 ---
 
@@ -80,16 +87,16 @@ O `KinectSensor` em modo simulação mantém uma **matriz de alturas persistente
 
 - O efeito é **acumulativo**: quanto mais tempo o mouse permanece sobre um ponto, maior a alteração de altura.
 - A modificação usa um **perfil Gaussiano** com raio de 10 cm, garantindo bordas suaves e naturais (sem buracos quadrados).
-- A altura é limitada ao intervalo físico $[-0{,}20 \text{ m},\; 0{,}00 \text{ m}]$ (fundo do caixão → nível da tampa).
+- A altura é limitada ao intervalo físico $[0{,}00 \text{ m},\; +0{,}20 \text{ m}]$ (base de madeira → borda superior).
 - A grade de quadrados coloridos **reage instantaneamente** na tela: ao cavar uma região verde, ela se torna azul; ao preencher uma vermelha, ela se torna verde.
 
-### Exemplo de interação
+### Exemplo de interação (replica o teste de aceitação oficial)
 
-1. Ao iniciar, toda a areia está a $Z = -0{,}10$ m (meio da profundidade, nivelada).
-2. O MDE alvo (Cubo Central) pede $Z = -0{,}10$ m no platô central (50×50 cm) e $Z = -0{,}20$ m no restante da mesa.
-3. Resultado inicial: platô central **verde** (já no alvo), restante da mesa **azul** (areia acima do fundo esperado — dependendo da tolerância).
-4. O operador **arrasta o botão esquerdo fora do platô** → a areia desce até o fundo → quadrados azuis se tornam verdes.
-5. O operador **arrasta o botão direito no platô**, se necessário → a areia sobe até o nível do platô → quadrados vermelhos se tornam verdes.
+1. Ao iniciar, o caixão virtual está **vazio** ($Z = 0{,}0$ m em toda a base) — Passo A.
+2. O MDE alvo (Cubo Central) pede $Z = +0{,}10$ m no bloco central (50×50 cm) e $Z = 0{,}0$ m no restante da mesa — Passo B.
+3. Resultado inicial após calibrar: restante da mesa **verde** (base na altura certa do chão do cenário — Passo C); bloco central **azul** (falta volume — Passo D).
+4. O operador **arrasta o botão direito no centro** → a areia sobe até +10 cm → o centro se torna **verde** (equivalente virtual do Passo E, inserir um cubo físico).
+5. Se passar da altura, o centro fica **vermelho** → **arrastar o botão esquerdo** para cavar de volta ao verde.
 6. **Objetivo**: tornar toda a grade verde — o terreno virtual replica o MDE (Cubo Central).
 
 ---
@@ -135,9 +142,9 @@ O resultado é uma **projeção sólida e limpa** sobre a areia — como "curvas
 
 | Camada | Módulo | Responsabilidade |
 |---|---|---|
-| **Hardware** | `kinect_sensor.py` | Classe `KinectSensor`: Open3D → freenect → simulação com **grade persistente** + `modificar_areia()`, faixa Z ∈ [-0,20, 0,00] m |
-| **Lógica** | `motor_caixao_areia.py` | Álgebra linear pura: **RANSAC** (isola o plano da tampa, descarta moldura/piso/ruído) + **SVD** de refinamento, Gram-Schmidt, Transformação 4×4, back-projection pinhole, Tsai, **discretização em grade**, coloração por célula (`fillPoly`), cache JSON de calibração |
-| **Dados** | `mde_cartografia.py` | Classe `AdaptadorMDE`: GeoTIFF via rasterio → fallback **Cubo Central** (platô 50×50 cm a -0,10 m) + heatmap |
+| **Hardware** | `kinect_sensor.py` | Classe `KinectSensor`: Open3D → freenect → simulação com **grade persistente** + `modificar_areia()`, faixa Z ∈ [0,00, +0,20] m (base = cota zero) |
+| **Lógica** | `motor_caixao_areia.py` | Álgebra linear pura: **RANSAC** (isola o plano de referência, descarta moldura/piso/ruído) + **SVD** de refinamento, Gram-Schmidt, Transformação 4×4, back-projection pinhole, Tsai, **discretização em grade**, coloração por célula (`fillPoly`), cache JSON de calibração (esquema v2) |
+| **Dados** | `mde_cartografia.py` | Classe `AdaptadorMDE`: GeoTIFF via rasterio → fallback **Cubo Central** (bloco 50×50 cm a +0,10 m acima da base) + heatmap |
 | **Orquestração** | `main.py` | Máquina de estados, dual-window, **mouse callback** (`cv2.setMouseCallback`), carregamento automático de `calibration_data.json` |
 
 ---
@@ -152,7 +159,7 @@ PFC-2026/
 ├── mde_cartografia.py         # AdaptadorMDE: GeoTIFF + fallback Cubo Central + heatmap
 ├── calibration_data.json      # Cache da matriz T_final (gerado após a 1ª calibração — não versionado)
 │
-├── test_motor_caixao.py       # 59 testes unitários automatizados
+├── test_motor_caixao.py       # 68 testes unitários automatizados (inclui o teste de aceitação)
 ├── requirements.txt           # Dependências Python (pip install -r requirements.txt)
 ├── DOCUMENTACAO_OFICIAL.md    # Documentação acadêmica completa para a banca
 └── README.md                  # Este arquivo
@@ -238,24 +245,19 @@ O `KinectSensor` detecta automaticamente:
 - **Azure Kinect / RealSense** → via Open3D
 - **Kinect v1** → via freenect / libfreenect
 
-### Configuração (topo de `main.py`)
+### Configuração (GUI exibida ao iniciar — todos os campos físicos em **centímetros**)
 
-```python
-CAMINHO_GEOTIFF      = "25S51_ZN.tif"    # Arquivo MDE (GeoTIFF)
-TOLERANCIA_COR       = 0.02              # metros (2 cm)
-LARGURA_MESA         = 1.50              # metros
-COMPRIMENTO_MESA     = 1.50              # metros
-PROFUNDIDADE_CAIXA   = 0.20              # metros (20 cm) — Z_mesa ∈ [-0.20, 0.00]
-ALTURA_KINECT        = 2.50              # metros (acima do nível da tampa, Z=0)
-CAMINHO_CALIBRACAO   = "calibration_data.json"  # cache da matriz T_final
-RANSAC_N_ITER        = 1000              # iterações do RANSAC na calibração da tampa
-RANSAC_LIMIAR_DIST   = 0.03              # limiar de inlier do RANSAC, metros (3 cm)
-CELULAS_GRADE_X      = 30                # colunas da malha (5 cm cada)
-CELULAS_GRADE_Y      = 30                # linhas da malha (5 cm cada)
-RAIO_PA_VIRTUAL      = 0.05              # raio do pincel do mouse (5 cm), cavar e preencher
-INTENSIDADE_PA_VIRTUAL = 0.008           # deslocamento por evento (8 mm)
-FORCAR_SIMULACAO     = False             # True para ignorar Kinect
-```
+| Campo (aba) | Padrão | Interno (m) |
+|---|---|---|
+| Largura interna do caixão de areia — eixo X (cm) *(Dimensões)* | 150 | `LARGURA_MESA = 1.50` |
+| Comprimento interno do caixão de areia — eixo Y (cm) *(Dimensões)* | 150 | `COMPRIMENTO_MESA = 1.50` |
+| Profundidade do caixão — da borda superior até a base de madeira (cm) *(Dimensões)* | 20 | `PROFUNDIDADE_CAIXA = 0.20` |
+| Superfície plana usada na calibração *(Calibração)* | Tampa sobre as bordas | `MODO_CALIBRACAO = "tampa"` |
+| Distância do Kinect até a Tampa de Calibração (cm) *(Calibração)* | 250 | `DISTANCIA_KINECT_TAMPA = 2.50` |
+| Tolerância de acerto da areia — pinta VERDE dentro de ± (cm) *(Calibração)* | 2 | `TOLERANCIA_COR = 0.02` |
+| RANSAC — distância máxima de um ponto ao plano (cm) *(Calibração)* | 3 | `RANSAC_LIMIAR_DIST = 0.03` |
+| RANSAC — número de tentativas de detecção do plano *(Calibração)* | 1000 | `RANSAC_N_ITER = 1000` |
+| Resolução do projetor / malha / pá virtual *(Avançado)* | 640×480, 30×30, 5 cm / 0,8 cm | — |
 
 ---
 
@@ -265,7 +267,9 @@ FORCAR_SIMULACAO     = False             # True para ignorar Kinect
 
 | Tecla | Ação |
 |---|---|
-| **C** | Calibrar com a tampa plana (RANSAC + SVD + Gram-Schmidt + Matriz 4×4) — salva `calibration_data.json` |
+| **C** | Calibrar com a superfície plana escolhida (RANSAC + SVD + Gram-Schmidt + Matriz 4×4) — salva `calibration_data.json` |
+| **ESPAÇO** / **ENTER** | Confirmar a remoção da tampa após a calibração (modo tampa, sensor real) |
+| **M** | Alternar mapa sintético (Cubo Central ↔ Morro Gaussiano) |
 | **F** | Toggle tela cheia na janela Projecao_Areia |
 | **Q** / **ESC** | Encerrar |
 
@@ -275,22 +279,22 @@ Raio de ação: **5 cm** ao redor do cursor, tanto para cavar quanto para preenc
 
 | Ação | Efeito |
 |---|---|
-| **Botão Esquerdo + Arrastar** | Cavar areia (diminui $Z_{real}$, rumo a -0,20 m) |
-| **Botão Direito + Arrastar** | Preencher areia (aumenta $Z_{real}$, rumo a 0,00 m) |
+| **Botão Esquerdo + Arrastar** | Cavar areia (diminui $Z_{real}$, rumo à base 0,00 m) |
+| **Botão Direito + Arrastar** | Preencher areia (aumenta $Z_{real}$, rumo à borda +0,20 m) |
 
 ---
 
-## Roteiro de Demonstração para a Banca
+## Roteiro de Demonstração para a Banca (= Teste de Aceitação oficial)
 
 | Passo | Ação | Resultado esperado |
 |---|---|---|
-| 1 | `python main.py` | Duas janelas abrem: **Projecao_Areia** e **Gabarito_MDE** |
-| 2 | (1ª vez) Pressionar **C**; (execuções seguintes) automático | Calibração da tampa (RANSAC + SVD) e salvamento de `calibration_data.json`; execuções seguintes carregam o cache e pulam direto para o AR_LOOP |
-| 3 | Observar **Projecao_Areia** | Grade contínua de quadrados coloridos refletindo Z_mesa ∈ [-0,20, 0,00] m |
-| 4 | Observar **Gabarito_MDE** | Heatmap do Cubo Central (platô 50×50 cm) ou GeoTIFF real como referência |
-| 5 | **Arrastar botão direito** no platô central (fora do alvo) | Quadrados mudam de vermelho/azul → verde (areia ajustando ao platô -0,10 m) |
-| 6 | **Arrastar botão esquerdo** fora do platô | Quadrados mudam para verde conforme a areia desce ao fundo (-0,20 m) |
-| 7 | Continuar interagindo | Objetivo: tornar **toda a grade verde** — terreno virtual replica o MDE |
+| 1 | `python main.py` | GUI de configuração (cm) → duas janelas: **Projecao_Areia** e **Gabarito_MDE** |
+| 2 | Caixão **vazio** (Passo A), mapa alvo **Cubo Central** (Passo B) | Janela de projeção mostra o passo a passo de calibração do modo escolhido |
+| 3 | Apoiar a **tampa** sobre as bordas e pressionar **C** (Passo C) | RANSAC detecta o plano, valida a distância, salva `calibration_data.json` e pede **"RETIRE A TAMPA"** |
+| 4 | Retirar a tampa e pressionar **ESPAÇO** | AR_LOOP inicia: a **base vazia projeta VERDE** (cota zero = chão do cenário) |
+| 5 | Observar o centro da caixa (Passo D) | Centro projeta **AZUL** — o mapa pede um cubo de +10 cm e falta volume |
+| 6 | Inserir um **cubo físico de 10 cm** no centro (Passo E) | O Kinect lê a nova altura e o **topo do cubo projeta VERDE** |
+| 7 | Continuar interagindo (areia/pá virtual) | Objetivo: tornar **toda a grade verde** — terreno replica o MDE |
 | 8 | Pressionar **F** | Tela cheia na janela de projeção (para projetor real) |
 | 9 | Pressionar **C** | Recalibração manual (sobrescreve `calibration_data.json`) |
 | 10 | Pressionar **Q** | Encerramento limpo |
@@ -301,11 +305,11 @@ Raio de ação: **5 cm** ao redor do cursor, tanto para cavar quanto para preenc
 
 ## Testes Unitários
 
-59 testes automatizados cobrindo todo o motor matemático e o mapa sintético:
+68 testes automatizados cobrindo todo o motor matemático, os mapas sintéticos e o teste de aceitação oficial:
 
 ```bash
 python -m unittest test_motor_caixao -v
-# Resultado: 58 passed, 1 skipped (Open3D não instalado)
+# Resultado: 67 passed, 1 skipped (Open3D não instalado)
 ```
 
 | Classe | Testes | Componente |
@@ -319,13 +323,15 @@ python -m unittest test_motor_caixao -v
 | `TestProjecaoTsai` | 3 | Projeção pinhole, deslocamento em $x$ |
 | `TestLeituraRGBD` | 1 | Importação condicional Open3D |
 | `TestBackProjectionMesa` | 4 | Convenção de sinal Z (pinhole → mesa), filtro de alcance |
-| `TestCalibracaoTampa` | 6 | SVD na tampa Z=0, T_shift, areia negativa após calibração, calibração RANSAC com moldura/piso contaminando a nuvem |
+| `TestCalibracaoTampa` | 8 | Modos tampa/base, tampa → +0,20, base vazia → cota zero, cubo de 10 cm → +0,10, calibração RANSAC com moldura/piso contaminando a nuvem |
 | `TestPipeline` | 2 | Integração completa Passos 1+2 (genérico) |
-| `TestPersistenciaCalibracao` | 4 | Round-trip JSON, arquivo ausente/corrompido, shape inválida |
-| `TestCuboCentral` | 7 | Platô -0,10 m, fundo -0,20 m, bordas, versão vetorizada |
-| `TestColoracaoBGR` | 10 | Vermelho/Azul/Verde nos limites -0,10 m e -0,20 m, vetorizado |
-| `TestDiscretizacaoGradeNegativa` | 1 | Agregação por célula com Z negativo |
+| `TestPersistenciaCalibracao` | 6 | Round-trip JSON, arquivo ausente/corrompido, shape inválida, cache v1 rejeitado, metadados modo/plano (esquema v2) |
+| `TestCuboCentral` | 7 | Cubo +0,10 m (volume positivo), base vazia 0,0 m, bordas, versão vetorizada |
+| `TestMorroGaussiano` | 4 | Pico +0,20 m no centro, bordas → 0, faixa positiva, versão vetorizada |
+| `TestColoracaoBGR` | 10 | Vermelho (cavar) / Azul (preencher) / Verde (OK) nos alvos +0,10 m e 0,0 m, vetorizado |
+| `TestDiscretizacaoGradeNegativa` | 1 | Agregação por célula (robusta a Z de qualquer sinal) |
 | `TestRenderizacaoGrade` | 2 | Pipeline completo grade→cor→Tsai→fillPoly |
+| `TestFluxoAceitacao` | 1 | **Requisito 4 ponta a ponta**: caixa vazia → calibração com tampa → base VERDE, centro AZUL → cubo físico de 10 cm → topo VERDE |
 
 ---
 ## Solução de Problemas — pykinect2 + Python 3.12
@@ -411,6 +417,7 @@ python diagnostico_kinect.py                              # todos os 6 passos �
 
 | Versão | Data | Mudança |
 |---|---|---|
+| **6.0** | Agosto/2026 | **Cota zero na BASE + volumes positivos + calibração guiada em cm** — inversão da convenção de Z: a cota zero passou da tampa para a **base de madeira vazia**, com alturas **positivas para cima** ($Z_{mesa} \in [0, +0{,}20]$ m). Os mapas de demonstração viraram **volumes positivos** (Cubo Central: bloco a **+0,10 m** acima da base; Morro Gaussiano: pico **+0,20 m**; GeoTIFF normalizado para $[0, +prof]$) — corrigindo o defeito do "cubo renderizado como buraco". Calibração ganhou **dois modos** (tampa sobre as bordas — oficial — ou base vazia), **validação de sanidade** da distância sensor→plano contra o valor da GUI, passo a passo **on-screen** no estado IDLE, e o novo estado **REMOVER_TAMPA** ("retire a tampa e pressione ESPAÇO"). `calibration_data.json` migrou para o **esquema v2** (versão + modo + equação do plano RANSAC $ax+by+cz+d=0$); caches antigos são descartados automaticamente. GUI reorganizada em 4 abas com **todos os campos físicos em centímetros** e rótulos descritivos (ex.: "Distância do Kinect até a Tampa de Calibração (cm)"); perfis antigos em metros são convertidos ao carregar. Grade de simulação passa a nascer **vazia** ($Z=0$) e a faixa de captura do sensor é derivada da distância informada (fim do `alcance_max=4,5 m` fixo). Legenda do HUD em português orientado à ação (CAVE / PREENCHA / OK). Suíte expandida de 59 para **68 testes**, incluindo `TestFluxoAceitacao` — o teste de aceitação oficial (caixa vazia → base VERDE, centro AZUL → cubo físico de 10 cm → topo VERDE) executado ponta a ponta. |
 | **5.0** | Julho/2026 | **RANSAC obrigatório na calibração da tampa + HUD on-screen** — o FOV do Kinect é mais largo que o caixão (captura moldura de madeira, piso e ruído da sala), então a calibração oficial (`main._executar_calibracao`) passou a rodar **RANSAC** (1000 iterações, limiar de inlier 3 cm — `RANSAC_N_ITER`/`RANSAC_LIMIAR_DIST`) antes do refinamento por SVD, substituindo o SVD puro da versão 4.0. `pipeline_plano_e_base()` passou a repassar `n_iter`/`limiar_dist`/`min_inliers_ratio` para `ajustar_plano_ransac()`. Adicionada legenda visual (HUD) desenhada diretamente sobre a janela de projeção (`main._desenhar_legenda_hud`): overlay semi-transparente com as cores Vermelho/Azul/Verde, seus significados, e o estado atual do sistema (calibração pendente/cache/manual, pá virtual ativa). Raio da pá virtual corrigido para 5 cm (era 10 cm na documentação, já era 5 cm no código). Corrigido `UnicodeEncodeError` em consoles Windows cp1252 ao imprimir símbolos matemáticos (∈, →) — `sys.stdout.reconfigure(encoding="utf-8")` aplicado em `main.py`, `kinect_sensor.py` e `mde_cartografia.py`. `requirements.txt` relaxado para pisos mínimos (`>=`) em pacotes sem exigência de compatibilidade binária, e adicionada a dependência `scipy` (usada por `AdaptadorMDE` mas ausente do arquivo). Suíte de testes expandida de 53 para 59 casos (`TestRANSAC` + teste de calibração RANSAC com outliers). |
 | **4.0** | Julho/2026 | **Calibração da Tampa + convenção Z negativa** — nova metodologia de calibração oficial: a mesa é calibrada **uma única vez** com uma tampa lisa e plana cobrindo todo o caixão (plano de referência $Z_{mesa}=0$), usando **SVD puro** (sem RANSAC, já que a tampa não tem outliers). A matriz $T_{final}$ é persistida em `calibration_data.json` e carregada automaticamente nas execuções seguintes (`salvar_matriz_calibracao`/`carregar_matriz_calibracao`). A areia passa a ocupar a faixa **negativa** $Z_{mesa} \in [-0{,}20, 0{,}0]$ m (fundo → tampa) em vez de $[0, 0{,}30]$ m — corrigido também um bug de convenção de sinal na back-projection pinhole (`profundidade_para_nuvem_mesa`, nova função pura em `motor_caixao_areia.py`), que sem a correção produziria Z positivo para a areia real. O Morro Gaussiano sintético foi substituído pelo **Cubo Central** (`altura_cubo_central`, `mde_cartografia.py`): platô de 50×50 cm a -0,10 m sobre um fundo a -0,20 m, mais fácil de reproduzir fisicamente para testes com a banca. Adicionada classificação de cor vetorizada (`cor_por_diferenca_vetorizado`) e consulta MDE vetorizada (`AdaptadorMDE.obter_z_alvo_array`), usadas por `gerar_imagem_grade_cores` para evitar o laço Python célula-a-célula. Suíte de testes expandida de 26 para 53 casos. |
 | **3.3** | Maio/2026 | **Calibração robusta com RANSAC** — adicionada função `ajustar_plano_ransac()` em `motor_caixao_areia.py`, aplicada antes dos mínimos quadráticos via SVD. O RANSAC (1000 iterações, limiar 1 cm, mínimo 30 % de inliers) identifica o conjunto dominante de pontos coplanares (fundo do caixão) e descarta outliers de paredes, chão externo e bordas. A amostragem dos candidatos é ponderada por uma Gaussiana centrada na região central da nuvem, refletindo que o Kinect está centralizado sobre o caixão. O refinamento SVD é executado somente sobre os inliers selecionados. `pipeline_plano_e_base()` atualizado de forma transparente; `main.py` sem alterações. |

@@ -25,17 +25,19 @@ Parâmetros intrínsecos do Kinect v2 (sensor de profundidade IR)
 
 Convenção de Coordenadas Z (referencial da mesa)
 -------------------------------------------------
-Após a calibração da tampa (ver ``motor_caixao_areia.pipeline_plano_e_base``),
-o plano de referência ``Z_mesa = 0.0 m`` coincide com o nível da tampa lisa
-(topo do caixão).  A areia, situada abaixo da tampa, ocupa sempre a faixa:
+Após a calibração (ver ``main._executar_calibracao``), a **cota zero**
+``Z_mesa = 0.0 m`` coincide com a **base de madeira vazia** do caixão, e
+as alturas crescem **para cima** (em direção ao sensor).  A areia ocupa
+sempre a faixa positiva:
 
-    Z_mesa ∈ [-``profundidade_caixa``, 0.0]   (padrão: [-0.20 m, 0.0 m])
+    Z_mesa ∈ [0.0, +``profundidade_caixa``]   (padrão: [0.0 m, +0.20 m])
 
-- ``Z_mesa = 0.0``               → nível da tampa (máximo de areia possível)
-- ``Z_mesa = -profundidade_caixa`` → fundo físico do caixão (sem areia)
+- ``Z_mesa = 0.0``                 → base de madeira (caixão vazio)
+- ``Z_mesa = +profundidade_caixa`` → borda superior do caixão
+  (nível da tampa de calibração; máximo de areia possível)
 
 A grade persistente do modo simulação (``_grade_areia``) respeita
-rigorosamente essa faixa negativa.
+rigorosamente essa faixa positiva e nasce em ``Z = 0.0`` (caixão vazio).
 
 Classes
 -------
@@ -121,8 +123,9 @@ _K1_CX:      float = 319.5
 _K1_CY:      float = 239.5
 
 # --- Convenção de Z do caixão (referencial da mesa, pós-calibração) ---
-Z_MESA_MAX: float = 0.0
-"""Nível de referência (Z = 0): topo do caixão / tampa de calibração."""
+Z_MESA_BASE: float = 0.0
+"""Cota zero (Z = 0): base de madeira vazia do caixão.  As alturas
+crescem para cima, até ``+profundidade_caixa`` (borda superior)."""
 
 
 # ======================================================================
@@ -155,12 +158,14 @@ class KinectSensor:
         Dimensão Y da mesa em metros (padrão: 1.50).
     profundidade_caixa : float
         Profundidade física do caixão em metros (padrão: 0.20 = 20 cm).
-        Delimita a faixa de Z válida da areia: ``[-profundidade_caixa, 0.0]``,
-        com ``0.0`` coincidindo com o nível da tampa de calibração (topo).
+        Delimita a faixa de Z válida da areia: ``[0.0, +profundidade_caixa]``,
+        com ``0.0`` coincidindo com a base de madeira vazia (cota zero).
     altura_kinect : float
-        Altura de montagem do sensor acima do nível da tampa
-        (``Z_mesa = 0``), em metros (padrão: 2.50).  Usado apenas para
-        sintetizar o mapa de profundidade em modo simulação.
+        Distância do sensor até a TAMPA DE CALIBRAÇÃO (borda superior
+        do caixão), em metros (padrão: 2.50) — o campo "Distância do
+        Kinect até a Tampa de Calibração (cm)" da GUI.  Usada para
+        sintetizar o mapa de profundidade em modo simulação e para
+        derivar a faixa válida de captura no modo real.
 
     Attributes
     ----------
@@ -421,15 +426,16 @@ class KinectSensor:
     def _profundidade_simulada(self) -> np.ndarray:
         """Mapa de profundidade sintético baseado na grade persistente.
 
-        Converte as alturas Z_mesa (negativas, referencial da tampa) da
-        grade de areia em profundidades vistas por um Kinect montado
-        ``altura_kinect`` metros acima do nível da tampa (Z_mesa = 0):
+        Converte as alturas Z_mesa (positivas, medidas a partir da base
+        de madeira) da grade de areia em profundidades vistas por um
+        Kinect montado ``altura_kinect`` metros acima da TAMPA — ou seja,
+        ``altura_kinect + profundidade_caixa`` metros acima da base:
 
-            profundidade = altura_kinect - Z_mesa
+            profundidade = (altura_kinect + profundidade_caixa) - Z_mesa
 
-        Como ``Z_mesa <= 0``, subtrair um valor negativo *aumenta* a
-        distância medida — fisicamente correto: quanto mais fundo o
-        fundo do caixão (Z_mesa mais negativo), mais longe do sensor.
+        Quanto mais alta a areia (Z_mesa maior), mais perto do sensor —
+        profundidade menor.  Base vazia (Z_mesa = 0) → profundidade
+        máxima ``altura_kinect + profundidade_caixa``.
 
         Returns
         -------
@@ -437,11 +443,12 @@ class KinectSensor:
         """
         w, h = _K1_LARGURA, _K1_ALTURA  # resolução simulada
 
+        # Sensor → tampa = altura_kinect; sensor → base = altura + prof.
         prof_min_mm = self._altura_kinect * 1000.0
         prof_max_mm = (self._altura_kinect + self._profundidade_caixa) * 1000.0
 
         if self._grade_areia is None:
-            return np.full((h, w), int(prof_min_mm), dtype=np.uint16)
+            return np.full((h, w), int(prof_max_mm), dtype=np.uint16)
 
         # Interpola a grade de areia (Z_mesa, em metros) para a resolução da janela
         grade_norm = cv2.resize(
@@ -452,7 +459,7 @@ class KinectSensor:
 
         z_mesa_mm = (grade_norm * 1000.0).astype(np.float32)
         profundidade = np.clip(
-            self._altura_kinect * 1000.0 - z_mesa_mm,
+            prof_max_mm - z_mesa_mm,
             prof_min_mm - 20.0, prof_max_mm + 20.0,
         )
 
@@ -477,6 +484,13 @@ class KinectSensor:
         justificativa da inversão de sinal em relação à profundidade
         bruta do SDK.
 
+        A faixa válida de profundidade é derivada da distância de
+        montagem informada pelo operador ("Distância do Kinect até a
+        Tampa de Calibração"): pontos muito mais próximos que a tampa
+        ou muito mais distantes que a base do caixão (± 0,5 m de folga)
+        são descartados — isso remove o piso da sala e objetos entre o
+        sensor e o caixão antes mesmo do RANSAC.
+
         No modo simulação, os pontos já vêm em coordenadas da mesa
         ``[x_m, y_m, z_m]`` diretamente da grade persistente.
 
@@ -488,8 +502,11 @@ class KinectSensor:
             return self._nuvem_simulada_mesa()
 
         profundidade = self.capturar_profundidade()
+        alcance_min = max(0.3, self._altura_kinect - 0.5)
+        alcance_max = self._altura_kinect + self._profundidade_caixa + 0.5
         return profundidade_para_nuvem_mesa(
             profundidade, self._fx, self._fy, self._cx, self._cy,
+            alcance_min=alcance_min, alcance_max=alcance_max,
         )
 
     # ------------------------------------------------------------------
@@ -499,15 +516,14 @@ class KinectSensor:
     def _inicializar_grade_simulacao(self) -> None:
         """Cria a grade persistente de alturas para o modo simulação.
 
-        Grid ``RxR`` cobrindo a mesa, inicializado no meio da profundidade
-        física do caixão: ``Z = -profundidade_caixa / 2`` (padrão: -0.10 m
-        com ``profundidade_caixa = 0.20``).  Essa escolha deixa areia
-        suficiente para tanto cavar (rumo a -0.20) quanto preencher
-        (rumo a 0.0) desde o primeiro frame, dentro da faixa válida
-        ``[-profundidade_caixa, 0.0]``.
+        Grid ``RxR`` cobrindo a mesa, inicializado em ``Z = 0.0`` —
+        **caixão completamente vazio** (só a base de madeira), replicando
+        o Passo A do teste de aceitação oficial.  A areia é adicionada
+        com a pá virtual (botão direito) até ``+profundidade_caixa``,
+        dentro da faixa válida ``[0.0, +profundidade_caixa]``.
         """
         res = self._resolucao_grade_sim
-        z_inicial = -self._profundidade_caixa / 2.0
+        z_inicial = 0.0
         self._eixo_x_sim = np.linspace(0.0, self._largura_mesa,     res)
         self._eixo_y_sim = np.linspace(0.0, self._comprimento_mesa, res)
         # Cacheados uma única vez: os eixos são fixos pela sessão inteira,
@@ -523,8 +539,8 @@ class KinectSensor:
         )
         print(
             f"[KinectSensor] Grade de simulação: {res}×{res}, "
-            f"Z inicial = {z_inicial:.2f} m "
-            f"(faixa válida: [-{self._profundidade_caixa:.2f}, 0.00] m)"
+            f"Z inicial = {z_inicial:.2f} m (caixão vazio; "
+            f"faixa válida: [0.00, +{self._profundidade_caixa:.2f}] m)"
         )
 
     def modificar_areia(
@@ -545,8 +561,9 @@ class KinectSensor:
         x, y : float
             Coordenadas do centro de ação na mesa (metros).
         cavar : bool
-            True → diminui Z (cava, aproxima do fundo ``-profundidade_caixa``).
-            False → aumenta Z (preenche, aproxima do nível da tampa ``0.0``).
+            True → diminui Z (cava, aproxima da base vazia ``0.0``).
+            False → aumenta Z (preenche, aproxima da borda superior
+            ``+profundidade_caixa``).
         raio : float
             Raio de ação em metros (padrão: 0.10 m).
         intensidade : float
@@ -566,7 +583,7 @@ class KinectSensor:
         else:
             self._grade_areia += delta
 
-        np.clip(self._grade_areia, -self._profundidade_caixa, 0.0,
+        np.clip(self._grade_areia, 0.0, self._profundidade_caixa,
                 out=self._grade_areia)
 
     def _nuvem_simulada_mesa(self) -> np.ndarray:

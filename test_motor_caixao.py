@@ -8,9 +8,10 @@ matemática por trás dos asserts, para facilitar a apresentação à
 banca examinadora.
 
 Convenção de coordenadas testada (ver docstrings de ``motor_caixao_areia``
-e ``mde_cartografia``): após a **Calibração da Tampa**, ``Z_mesa = 0.0``
-corresponde ao nível da tampa plana (topo do caixão) e a areia ocupa
-sempre ``Z_mesa ∈ [-0.20 m, 0.0 m]`` (fundo físico → tampa).
+e ``mde_cartografia``): após a calibração, ``Z_mesa = 0.0`` corresponde à
+**base de madeira vazia** do caixão (cota zero) e a areia ocupa sempre a
+faixa positiva ``Z_mesa ∈ [0.0 m, +0.20 m]`` (base → borda superior /
+nível da tampa de calibração).  Formas dos mapas são volumes positivos.
 
 Executar:
     python -m pytest test_motor_caixao.py -v
@@ -46,8 +47,10 @@ from motor_caixao_areia import (
 
 from mde_cartografia import (
     altura_cubo_central,
+    altura_gaussiana,
     CUBO_X_MIN, CUBO_X_MAX, CUBO_Y_MIN, CUBO_Y_MAX,
     CUBO_Z_TARGET, FUNDO_Z_TARGET,
+    TIPO_MAPA_CUBO,
     AdaptadorMDE,
 )
 
@@ -582,9 +585,11 @@ class TestBackProjectionMesa(unittest.TestCase):
     Testa ``profundidade_para_nuvem_mesa``: a conversão do mapa de
     profundidade bruto do Kinect (aumenta ao se afastar do sensor) para
     a convenção de Z usada pela mesa (aumenta ao se aproximar do
-    sensor, isto é, mais areia).  Sem essa inversão de sinal, o SVD
-    produziria Z_mesa POSITIVO para a areia (mais longe do sensor do
-    que a tampa), violando a faixa física exigida [-0.20, 0.0].
+    sensor, isto é, mais areia).  Sem essa inversão de sinal, um monte
+    de areia apareceria mais BAIXO que a base — o defeito clássico de
+    "cubo renderizado como buraco".  (A origem — cota zero na base —
+    é definida depois, pela translação em Z de ``T_final``; aqui os
+    valores ainda estão no referencial do sensor.)
     """
 
     def test_pixel_central_sem_offset(self):
@@ -668,36 +673,48 @@ class TestBackProjectionMesa(unittest.TestCase):
 class TestCalibracaoTampa(unittest.TestCase):
     """
     Testa o fluxo completo de calibração oficial do sistema: captura da
-    nuvem da tampa plana → SVD (``pipeline_plano_e_base``, sem RANSAC)
-    → Gram-Schmidt → T_shift → T_final, replicando exatamente o que
-    ``main.py._executar_calibracao`` faz no modo real.
+    nuvem da superfície plana de referência → SVD/RANSAC
+    (``pipeline_plano_e_base``) → Gram-Schmidt → T_shift → T_final,
+    replicando exatamente o que ``main.py._executar_calibracao`` faz no
+    modo real, nos dois modos de calibração:
 
-    Cenário: sensor com fx=fy=500, cx=cy=2, tampa plana capturada em uma
-    grade de pixels 5×5 a 2500 mm (2,5 m) de profundidade constante.
+    - **modo "tampa"** (oficial): plano detectado = tampa sobre as
+      bordas; a cota zero (base de madeira) é derivada descendo
+      ``PROFUNDIDADE_CAIXA`` — ``T_shift[2, 3] = +PROFUNDIDADE_CAIXA``.
+    - **modo "base"**: plano detectado = a própria base vazia; nenhum
+      deslocamento em Z.
+
+    Cenário: sensor com fx=fy=500, cx=cy=2, plano capturado em uma
+    grade de pixels 5×5 a profundidade constante (tampa: 2500 mm;
+    base: 2700 mm — o sensor fica 2,5 m acima da tampa e a caixa tem
+    0,20 m de profundidade).
     """
 
     LARGURA_MESA = 1.5
     COMPRIMENTO_MESA = 1.5
+    PROFUNDIDADE_CAIXA = 0.20
 
-    def _capturar_tampa(self, profundidade_mm: float = 2500.0) -> np.ndarray:
+    def _capturar_plano(self, profundidade_mm: float = 2500.0) -> np.ndarray:
         prof = np.full((5, 5), profundidade_mm, dtype=np.uint16)
         return profundidade_para_nuvem_mesa(prof, fx=500.0, fy=500.0, cx=2.0, cy=2.0)
 
-    def _t_final(self, pontos_tampa: np.ndarray) -> np.ndarray:
-        normal, d, centroide, X, Y, Z, T = pipeline_plano_e_base(pontos_tampa)
+    def _t_final(self, pontos_plano: np.ndarray, modo: str = "tampa") -> np.ndarray:
+        normal, d, centroide, X, Y, Z, T = pipeline_plano_e_base(pontos_plano)
         T_shift = np.eye(4)
         T_shift[0, 3] = self.LARGURA_MESA / 2.0
         T_shift[1, 3] = self.COMPRIMENTO_MESA / 2.0
+        if modo == "tampa":
+            T_shift[2, 3] = self.PROFUNDIDADE_CAIXA
         return T_shift @ T
 
     def test_svd_encontra_normal_vertical_na_tampa(self):
         """
-        A tampa é um plano de profundidade constante (Z_mesa = -2.5
-        antes da calibração) — o SVD deve encontrar a direção de menor
+        A tampa é um plano de profundidade constante (Z = -2.5 no
+        referencial do sensor) — o SVD deve encontrar a direção de menor
         variância (a própria profundidade) como normal, resultando em
         (0, 0, 1) após a convenção de sinal positivo.
         """
-        pontos = self._capturar_tampa()
+        pontos = self._capturar_plano()
         normal, d, centroide = ajustar_plano_svd(pontos)
 
         self.assertTrue(arrays_proximos(np.abs(normal), [0, 0, 1]),
@@ -705,76 +722,119 @@ class TestCalibracaoTampa(unittest.TestCase):
         self.assertAlmostEqual(centroide[2], -2.5, places=6,
                                msg="Z do centroide da tampa deveria ser -2.5 m")
 
-    def test_pontos_da_tampa_mapeiam_para_z_zero(self):
+    def test_modo_tampa_mapeia_tampa_para_profundidade_caixa(self):
         """
-        Após T_final, todo ponto da tampa (usada como referência) deve
-        cair em Z_mesa ≈ 0.0 — é a própria definição do plano de
-        referência da calibração.
+        Modo tampa: o plano da tampa fica na BORDA SUPERIOR do caixão,
+        ``PROFUNDIDADE_CAIXA`` acima da base.  Após T_final, todo ponto
+        da tampa deve cair em Z_mesa ≈ +0.20 (não zero — a cota zero é
+        a base de madeira, derivada abaixo da tampa).
         """
-        pontos = self._capturar_tampa()
-        T_final = self._t_final(pontos)
+        pontos = self._capturar_plano()
+        T_final = self._t_final(pontos, modo="tampa")
 
         transformados = transformar_pontos(T_final, pontos)
         for i, pt in enumerate(transformados):
             self.assertAlmostEqual(
-                pt[2], 0.0, places=6,
-                msg=f"Ponto {i} da tampa: Z_mesa = {pt[2]}, deveria ser 0.0",
+                pt[2], self.PROFUNDIDADE_CAIXA, places=6,
+                msg=f"Ponto {i} da tampa: Z_mesa = {pt[2]}, deveria ser +0.20",
             )
+
+    def test_modo_tampa_base_vazia_mapeia_para_cota_zero(self):
+        """
+        Passo C do teste de aceitação: calibrada a tampa (2500 mm) e
+        removida, a BASE VAZIA do caixão (2700 mm — 20 cm mais fundo)
+        deve ler exatamente Z_mesa ≈ 0.0 (cota zero → projetada VERDE
+        contra o alvo 0.0 do chão do cenário).
+        """
+        pontos_tampa = self._capturar_plano(profundidade_mm=2500.0)
+        T_final = self._t_final(pontos_tampa, modo="tampa")
+
+        pontos_base = self._capturar_plano(profundidade_mm=2700.0)
+        transformados = transformar_pontos(T_final, pontos_base)
+
+        for i, pt in enumerate(transformados):
+            self.assertAlmostEqual(
+                pt[2], 0.0, places=4,
+                msg=f"Ponto {i} da base vazia: Z_mesa = {pt[2]}, deveria ser 0.0",
+            )
+
+    def test_modo_base_plano_detectado_e_a_propria_cota_zero(self):
+        """
+        Modo base: o RANSAC roda sobre a base vazia (2700 mm) e o plano
+        detectado É a cota zero — sem deslocamento em Z.  Um cubo físico
+        de 10 cm sobre a base (2600 mm) deve ler Z_mesa ≈ +0.10.
+        """
+        pontos_base = self._capturar_plano(profundidade_mm=2700.0)
+        T_final = self._t_final(pontos_base, modo="base")
+
+        transformados_base = transformar_pontos(T_final, pontos_base)
+        self.assertTrue(
+            np.allclose(transformados_base[:, 2], 0.0, atol=1e-4),
+            "A base calibrada deveria ler Z_mesa ~ 0.0",
+        )
+
+        pontos_cubo = self._capturar_plano(profundidade_mm=2600.0)  # 10 cm acima
+        transformados_cubo = transformar_pontos(T_final, pontos_cubo)
+        self.assertTrue(
+            np.allclose(transformados_cubo[:, 2], 0.10, atol=1e-4),
+            "O topo de um cubo de 10 cm deveria ler Z_mesa ~ +0.10",
+        )
 
     def test_t_shift_centraliza_tampa_em_l_sobre_2(self):
         """
         O centro físico da tampa (sob o sensor) deve cair exatamente em
-        (LARGURA_MESA/2, COMPRIMENTO_MESA/2, 0) após T_final — a
-        propriedade central do T_shift descrita na especificação.
+        (LARGURA_MESA/2, COMPRIMENTO_MESA/2, +PROFUNDIDADE_CAIXA) após
+        T_final — a propriedade central do T_shift.
         """
-        pontos = self._capturar_tampa()
-        T_final = self._t_final(pontos)
+        pontos = self._capturar_plano()
+        T_final = self._t_final(pontos, modo="tampa")
 
         centro_tampa = pontos.mean(axis=0, keepdims=True)  # (1, 3)
         resultado = transformar_pontos(T_final, centro_tampa)[0]
 
         self.assertAlmostEqual(resultado[0], self.LARGURA_MESA / 2.0, places=6)
         self.assertAlmostEqual(resultado[1], self.COMPRIMENTO_MESA / 2.0, places=6)
-        self.assertAlmostEqual(resultado[2], 0.0, places=6)
+        self.assertAlmostEqual(resultado[2], self.PROFUNDIDADE_CAIXA, places=6)
 
-    def test_areia_abaixo_da_tampa_e_negativa(self):
+    def test_areia_abaixo_da_tampa_fica_na_faixa_positiva(self):
         """
         Um ponto de areia capturado 15 cm mais fundo (mais longe do
-        sensor) que a tampa deve mapear para Z_mesa = -0.15 após
-        T_final — dentro da faixa física exigida [-0.20, 0.0].
+        sensor) que a tampa deve mapear para Z_mesa = +0.05 após
+        T_final (20 cm da tampa até a base − 15 cm cavados) — dentro
+        da faixa física exigida [0.0, +0.20].
         """
-        pontos_tampa = self._capturar_tampa(profundidade_mm=2500.0)
-        T_final = self._t_final(pontos_tampa)
+        pontos_tampa = self._capturar_plano(profundidade_mm=2500.0)
+        T_final = self._t_final(pontos_tampa, modo="tampa")
 
-        pontos_areia = self._capturar_tampa(profundidade_mm=2650.0)  # 15 cm mais fundo
+        pontos_areia = self._capturar_plano(profundidade_mm=2650.0)  # 15 cm mais fundo
         transformados = transformar_pontos(T_final, pontos_areia)
 
         for i, pt in enumerate(transformados):
             self.assertAlmostEqual(
-                pt[2], -0.15, places=4,
-                msg=f"Ponto {i} de areia: Z_mesa = {pt[2]}, deveria ser -0.15",
+                pt[2], 0.05, places=4,
+                msg=f"Ponto {i} de areia: Z_mesa = {pt[2]}, deveria ser +0.05",
             )
-            self.assertLessEqual(pt[2], 0.0, "Areia nunca deve ficar acima da tampa")
-            self.assertGreaterEqual(pt[2], -0.20, "Areia nunca deve ficar abaixo do fundo")
+            self.assertGreaterEqual(pt[2], 0.0, "Areia nunca deve ficar abaixo da base")
+            self.assertLessEqual(pt[2], 0.20, "Areia nunca deve ficar acima da tampa")
 
     def test_pipeline_aceita_ransac_opcional(self):
         """``usar_ransac=True`` também deve convergir para a mesma normal
         (dados 100% coplanares, sem outliers — RANSAC não muda o resultado)."""
-        pontos = self._capturar_tampa()
+        pontos = self._capturar_plano()
         normal, d, centroide, X, Y, Z, T = pipeline_plano_e_base(pontos, usar_ransac=True)
         self.assertTrue(arrays_proximos(np.abs(normal), [0, 0, 1]))
 
-    def test_calibracao_ransac_com_moldura_e_piso_mapeia_tampa_para_z_zero(self):
+    def test_calibracao_ransac_com_moldura_e_piso(self):
         """
         Fluxo completo da calibração oficial (replicando
-        ``main._executar_calibracao``) com a nuvem contaminada por
-        outliers de moldura de madeira e piso — exatamente o cenário
-        descrito na especificação, já que o FOV do Kinect é mais largo
-        que o caixão.  RANSAC (limiar 3 cm, 1000 iterações) → SVD →
-        Gram-Schmidt → T_shift → T_final.  Os pontos da TAMPA (não os
-        outliers) devem mapear para Z_mesa ≈ 0 — a própria definição do
-        plano de referência da calibração — comprovando que a
-        contaminação da nuvem não compromete o resultado.
+        ``main._executar_calibracao``, modo tampa) com a nuvem
+        contaminada por outliers de moldura de madeira e piso —
+        exatamente o cenário da especificação, já que o FOV do Kinect é
+        mais largo que o caixão.  RANSAC (limiar 3 cm, 1000 iterações)
+        → SVD → Gram-Schmidt → T_shift → T_final.  Os pontos da TAMPA
+        (não os outliers) devem mapear para Z_mesa ≈ +PROFUNDIDADE_CAIXA
+        — comprovando que a contaminação da nuvem não compromete o
+        resultado.
         """
         h_tampa, w_tampa = 30, 30
         prof_tampa = np.full((h_tampa, w_tampa), 2500.0, dtype=np.uint16)
@@ -802,12 +862,13 @@ class TestCalibracaoTampa(unittest.TestCase):
         T_shift = np.eye(4)
         T_shift[0, 3] = self.LARGURA_MESA / 2.0
         T_shift[1, 3] = self.COMPRIMENTO_MESA / 2.0
+        T_shift[2, 3] = self.PROFUNDIDADE_CAIXA
         T_final = T_shift @ T
 
         transformados = transformar_pontos(T_final, nuvem_tampa)
         self.assertTrue(
-            np.allclose(transformados[:, 2], 0.0, atol=1e-2),
-            "Pontos da tampa deveriam mapear para Z_mesa ~ 0 mesmo com "
+            np.allclose(transformados[:, 2], self.PROFUNDIDADE_CAIXA, atol=1e-2),
+            "Pontos da tampa deveriam mapear para Z_mesa ~ +0.20 mesmo com "
             "outliers de moldura/piso contaminando a nuvem de calibração",
         )
 
@@ -914,6 +975,35 @@ class TestPersistenciaCalibracao(unittest.TestCase):
             with self.assertRaises(ValueError):
                 salvar_matriz_calibracao(np.eye(3), caminho)
 
+    def test_cache_de_esquema_antigo_e_rejeitado(self):
+        """Um cache v1 (sem o campo "versao") foi gerado com a convenção
+        de Z antiga (cota zero na TAMPA, alturas negativas) — carregá-lo
+        produziria alturas erradas em todo o pipeline.  Deve retornar
+        ``None``, forçando recalibração."""
+        with tempfile.TemporaryDirectory() as tmp:
+            caminho = Path(tmp) / "cache_v1.json"
+            caminho.write_text(
+                json.dumps({"T_final": np.eye(4).tolist()}), encoding="utf-8"
+            )
+            self.assertIsNone(carregar_matriz_calibracao(caminho))
+
+    def test_metadados_modo_e_plano_persistidos(self):
+        """O esquema v2 grava o modo de calibração e a equação do plano
+        RANSAC (ax + by + cz + d = 0) como metadados de diagnóstico."""
+        T = np.eye(4)
+        plano = np.array([0.0, 0.0, 1.0, -2.5])
+        with tempfile.TemporaryDirectory() as tmp:
+            caminho = Path(tmp) / "calibration_data.json"
+            salvar_matriz_calibracao(T, caminho, modo="tampa", plano=plano)
+
+            dados = json.loads(caminho.read_text(encoding="utf-8"))
+            self.assertEqual(dados["versao"], 2)
+            self.assertEqual(dados["modo_calibracao"], "tampa")
+            self.assertEqual(dados["plano_ransac"], [0.0, 0.0, 1.0, -2.5])
+
+            # E o T continua carregável normalmente
+            self.assertIsNotNone(carregar_matriz_calibracao(caminho))
+
 
 # =====================================================================
 # 10. TESTES — Mapa Sintético "Cubo Central" (mde_cartografia)
@@ -921,27 +1011,28 @@ class TestPersistenciaCalibracao(unittest.TestCase):
 
 class TestCuboCentral(unittest.TestCase):
     """
-    Testa ``altura_cubo_central``: substitui o antigo Morro Gaussiano.
+    Testa ``altura_cubo_central`` — o cubo é um VOLUME POSITIVO que se
+    projeta para CIMA a partir da base vazia (cota zero):
 
-        Z_alvo(x, y) = -0.10  se 0.50 <= x <= 1.00 e 0.50 <= y <= 1.00
-        Z_alvo(x, y) = -0.20  caso contrário
+        Z_alvo(x, y) = +0.10  se 0.50 <= x <= 1.00 e 0.50 <= y <= 1.00
+        Z_alvo(x, y) =  0.00  caso contrário (base vazia)
     """
 
-    def test_centro_do_plato_e_menos_dez_cm(self):
-        self.assertAlmostEqual(altura_cubo_central(0.75, 0.75), -0.10)
+    def test_centro_do_cubo_e_mais_dez_cm(self):
+        self.assertAlmostEqual(altura_cubo_central(0.75, 0.75), +0.10)
 
-    def test_fora_do_plato_e_fundo(self):
-        self.assertAlmostEqual(altura_cubo_central(0.10, 0.10), -0.20)
-        self.assertAlmostEqual(altura_cubo_central(1.40, 1.40), -0.20)
+    def test_fora_do_cubo_e_base_vazia(self):
+        self.assertAlmostEqual(altura_cubo_central(0.10, 0.10), 0.0)
+        self.assertAlmostEqual(altura_cubo_central(1.40, 1.40), 0.0)
 
     def test_bordas_inclusivas(self):
-        """As bordas 0.50 e 1.00 pertencem ao platô (<=/>=), conforme a
+        """As bordas 0.50 e 1.00 pertencem ao cubo (<=/>=), conforme a
         especificação — não há suavização nem exclusão nos limites."""
         for x, y in [(0.50, 0.75), (1.00, 0.75), (0.75, 0.50), (0.75, 1.00),
                      (0.50, 0.50), (1.00, 1.00)]:
             self.assertAlmostEqual(
                 altura_cubo_central(x, y), CUBO_Z_TARGET,
-                msg=f"({x},{y}) na borda deveria estar no platô (-0.10)",
+                msg=f"({x},{y}) na borda deveria estar no topo do cubo (+0.10)",
             )
 
     def test_imediatamente_fora_da_borda(self):
@@ -950,7 +1041,7 @@ class TestCuboCentral(unittest.TestCase):
                      (0.75, CUBO_Y_MIN - eps), (0.75, CUBO_Y_MAX + eps)]:
             self.assertAlmostEqual(
                 altura_cubo_central(x, y), FUNDO_Z_TARGET,
-                msg=f"({x},{y}) logo fora da borda deveria ser o fundo (-0.20)",
+                msg=f"({x},{y}) logo fora da borda deveria ser a base vazia (0.0)",
             )
 
     def test_vetorizado_bate_com_escalar(self):
@@ -974,8 +1065,8 @@ class TestCuboCentral(unittest.TestCase):
         (não mais no Morro Gaussiano)."""
         mde = AdaptadorMDE(largura_mesa=1.5, comprimento_mesa=1.5, profundidade_caixa=0.20)
         self.assertTrue(mde.usando_sintetico)
-        self.assertAlmostEqual(mde.obter_z_alvo(0.75, 0.75), -0.10)
-        self.assertAlmostEqual(mde.obter_z_alvo(0.10, 0.10), -0.20)
+        self.assertAlmostEqual(mde.obter_z_alvo(0.75, 0.75), +0.10)
+        self.assertAlmostEqual(mde.obter_z_alvo(0.10, 0.10), 0.0)
 
     def test_adaptador_mde_obter_z_alvo_array(self):
         """A consulta vetorizada deve bater com a consulta escalar."""
@@ -991,19 +1082,62 @@ class TestCuboCentral(unittest.TestCase):
 
 
 # =====================================================================
+# 10b. TESTES — Mapa Sintético "Morro Gaussiano" (mde_cartografia)
+# =====================================================================
+
+class TestMorroGaussiano(unittest.TestCase):
+    """
+    Testa ``altura_gaussiana`` — o morro é um VOLUME POSITIVO que se
+    projeta para CIMA a partir da base vazia:
+
+        Z_alvo(x, y) = profundidade_caixa * exp(-dist²/σ²)
+
+    Pico +0.20 m no centro da mesa padrão (0.75, 0.75); tende a 0.0
+    (base vazia) nas bordas.
+    """
+
+    def test_pico_no_centro_e_profundidade_caixa(self):
+        self.assertAlmostEqual(altura_gaussiana(0.75, 0.75), 0.20, places=10)
+
+    def test_borda_tende_a_base_vazia(self):
+        # Canto (0, 0): dist² = 2 × 0.75² = 1.125; σ² = 0.1
+        # → 0.20 · e^(-11.25) ≈ 2.6e-6 — praticamente a base vazia.
+        self.assertLess(altura_gaussiana(0.0, 0.0), 0.001)
+
+    def test_faixa_sempre_positiva(self):
+        xs = np.linspace(0.0, 1.5, 16)
+        ys = np.linspace(0.0, 1.5, 16)
+        xx, yy = np.meshgrid(xs, ys)
+        alturas = altura_gaussiana(xx, yy)
+        self.assertTrue(np.all(alturas >= 0.0), "Morro nunca desce abaixo da base")
+        self.assertTrue(np.all(alturas <= 0.20 + 1e-12), "Morro nunca passa da borda")
+
+    def test_vetorizado_bate_com_escalar(self):
+        xs = np.linspace(0.0, 1.5, 7)
+        ys = np.linspace(0.0, 1.5, 7)
+        xx, yy = np.meshgrid(xs, ys)
+        resultado = altura_gaussiana(xx, yy)
+        for i in range(xx.shape[0]):
+            for j in range(xx.shape[1]):
+                esperado = altura_gaussiana(float(xx[i, j]), float(yy[i, j]))
+                self.assertAlmostEqual(resultado[i, j], esperado)
+
+
+# =====================================================================
 # 11. TESTES — Integração MDE + Coloração BGR (tau = 0.02 m)
 # =====================================================================
 
 class TestColoracaoBGR(unittest.TestCase):
     """
-    Testa a lógica de coloração comparando Z_real (Kinect) com Z_mde,
-    usando os valores físicos do caixão de areia: platô do Cubo Central
-    em -0.10 m e fundo em -0.20 m, com tolerância tau = 0.02 m.
+    Testa a paleta de "feedback de ação" comparando Z_real (Kinect) com
+    Z_alvo, usando os valores físicos do caixão de areia: topo do Cubo
+    Central em +0.10 m e base vazia em 0.0 m, com tolerância
+    tau = 0.02 m.
 
     Cores no padrão BGR (OpenCV):
-        Vermelho = (0, 0, 255)  →  precisa cavar   (areia em excesso)
-        Azul     = (255, 0, 0)  →  precisa preencher (areia insuficiente)
-        Verde    = (0, 255, 0)  →  OK
+        Vermelho = (0, 0, 255)  →  areia ALTA demais → CAVAR
+        Azul     = (255, 0, 0)  →  areia BAIXA demais → PREENCHER
+        Verde    = (0, 255, 0)  →  altura exata (dentro da tolerância)
     """
 
     VERMELHO = (0, 0, 255)
@@ -1011,49 +1145,50 @@ class TestColoracaoBGR(unittest.TestCase):
     VERDE    = (0, 255, 0)
     TAU = 0.02
 
-    # ----- No platô do Cubo Central (Z_alvo = -0.10) -----
+    # ----- No topo do Cubo Central (Z_alvo = +0.10) -----
 
-    def test_vermelho_excesso_de_areia_no_plato(self):
+    def test_vermelho_excesso_de_areia_no_cubo(self):
         """
-        Z_alvo = -0.10 (platô).  Z_real = -0.05 (areia empilhada bem
-        acima do platô, mais perto da tampa que o previsto).
-        Diferença = -0.05 - (-0.10) = +0.05 > tau (0.02)  →  Vermelho (cavar).
+        Z_alvo = +0.10 (topo do cubo).  Z_real = +0.15 (areia empilhada
+        acima do topo previsto).
+        Diferença = 0.15 - 0.10 = +0.05 > tau (0.02)  →  Vermelho (cavar).
         """
-        cor = cor_por_diferenca(z_real=-0.05, z_mde=-0.10, tolerancia=self.TAU)
+        cor = cor_por_diferenca(z_real=0.15, z_mde=0.10, tolerancia=self.TAU)
         self.assertEqual(cor, self.VERMELHO)
 
-    def test_azul_falta_areia_no_plato(self):
+    def test_azul_falta_areia_no_cubo(self):
         """
-        Z_alvo = -0.10.  Z_real = -0.15 (areia abaixo do platô esperado).
-        Diferença = -0.15 - (-0.10) = -0.05 < -tau  →  Azul (preencher).
+        Z_alvo = +0.10.  Z_real = +0.05 (falta volume para completar o cubo).
+        Diferença = 0.05 - 0.10 = -0.05 < -tau  →  Azul (preencher).
         """
-        cor = cor_por_diferenca(z_real=-0.15, z_mde=-0.10, tolerancia=self.TAU)
+        cor = cor_por_diferenca(z_real=0.05, z_mde=0.10, tolerancia=self.TAU)
         self.assertEqual(cor, self.AZUL)
 
-    def test_verde_no_plato(self):
-        """Z_real = Z_alvo = -0.10  →  diferença 0  →  Verde (OK)."""
-        cor = cor_por_diferenca(z_real=-0.10, z_mde=-0.10, tolerancia=self.TAU)
+    def test_verde_no_cubo(self):
+        """Z_real = Z_alvo = +0.10  →  diferença 0  →  Verde (OK)."""
+        cor = cor_por_diferenca(z_real=0.10, z_mde=0.10, tolerancia=self.TAU)
         self.assertEqual(cor, self.VERDE)
 
-    # ----- No fundo do caixão (Z_alvo = -0.20) -----
+    # ----- Na base vazia do caixão (Z_alvo = 0.0) -----
 
-    def test_vermelho_sobra_de_areia_no_fundo(self):
+    def test_vermelho_sobra_de_areia_na_base(self):
         """
-        Z_alvo = -0.20 (fundo, fora do platô).  Z_real = -0.17 (sobrou
+        Z_alvo = 0.0 (base vazia, fora do cubo).  Z_real = +0.03 (sobrou
         areia onde deveria estar vazio).
-        Diferença = -0.17 - (-0.20) = +0.03 > tau  →  Vermelho (cavar).
+        Diferença = 0.03 - 0.0 = +0.03 > tau  →  Vermelho (cavar).
         """
-        cor = cor_por_diferenca(z_real=-0.17, z_mde=-0.20, tolerancia=self.TAU)
+        cor = cor_por_diferenca(z_real=0.03, z_mde=0.0, tolerancia=self.TAU)
         self.assertEqual(cor, self.VERMELHO)
 
-    def test_verde_no_fundo(self):
-        """Z_real = Z_alvo = -0.20 (fundo vazio, como esperado)  →  Verde."""
-        cor = cor_por_diferenca(z_real=-0.20, z_mde=-0.20, tolerancia=self.TAU)
+    def test_verde_na_base_vazia(self):
+        """Z_real = Z_alvo = 0.0 (base vazia, como esperado)  →  Verde —
+        exatamente o Passo C do teste de aceitação."""
+        cor = cor_por_diferenca(z_real=0.0, z_mde=0.0, tolerancia=self.TAU)
         self.assertEqual(cor, self.VERDE)
 
-    def test_verde_dentro_da_tolerancia_no_fundo(self):
-        """Z_real = -0.19 (1 cm acima do fundo, dentro de tau=2 cm) → Verde."""
-        cor = cor_por_diferenca(z_real=-0.19, z_mde=-0.20, tolerancia=self.TAU)
+    def test_verde_dentro_da_tolerancia_na_base(self):
+        """Z_real = +0.01 (1 cm acima da base, dentro de tau=2 cm) → Verde."""
+        cor = cor_por_diferenca(z_real=0.01, z_mde=0.0, tolerancia=self.TAU)
         self.assertEqual(cor, self.VERDE)
 
     # ----- Limite exato (valores genéricos, sem risco de precisão de ponto flutuante) -----
@@ -1074,17 +1209,17 @@ class TestColoracaoBGR(unittest.TestCase):
         """
         Usa ``altura_cubo_central`` como função de MDE real:
 
-          Ponto A: (0.75, 0.75, -0.02)  →  dentro do platô (Z_alvo=-0.10),
+          Ponto A: (0.75, 0.75, +0.18)  →  dentro do cubo (Z_alvo=+0.10),
                     diff=+0.08 > 0.02  →  VERMELHO (excesso de areia)
-          Ponto B: (0.75, 0.75, -0.16)  →  dentro do platô, diff=-0.06 < -0.02
-                    →  AZUL (falta areia)
-          Ponto C: (0.10, 0.10, -0.19)  →  fora do platô (Z_alvo=-0.20),
-                    diff=+0.01 ∈ [-0.02,0.02]  →  VERDE (fundo OK)
+          Ponto B: (0.75, 0.75, +0.04)  →  dentro do cubo, diff=-0.06 < -0.02
+                    →  AZUL (falta volume — Passo D do teste de aceitação)
+          Ponto C: (0.10, 0.10, +0.01)  →  fora do cubo (Z_alvo=0.0),
+                    diff=+0.01 ∈ [-0.02,0.02]  →  VERDE (base OK)
         """
         pontos = np.array([
-            [0.75, 0.75, -0.02],
-            [0.75, 0.75, -0.16],
-            [0.10, 0.10, -0.19],
+            [0.75, 0.75, 0.18],
+            [0.75, 0.75, 0.04],
+            [0.10, 0.10, 0.01],
         ])
 
         cores = gerar_mapa_cores(pontos, funcao_mde=altura_cubo_central, tolerancia=self.TAU)
@@ -1099,8 +1234,8 @@ class TestColoracaoBGR(unittest.TestCase):
         """A classificação vetorizada deve ser idêntica, elemento a
         elemento, à classificação escalar para o mesmo conjunto de
         valores (incluindo casos de vermelho, azul e verde)."""
-        z_real = np.array([-0.05, -0.15, -0.10, -0.17, -0.20, -0.19])
-        z_mde  = np.array([-0.10, -0.10, -0.10, -0.20, -0.20, -0.20])
+        z_real = np.array([0.15, 0.05, 0.10, 0.03, 0.00, 0.01])
+        z_mde  = np.array([0.10, 0.10, 0.10, 0.00, 0.00, 0.00])
 
         cores_vet = cor_por_diferenca_vetorizado(z_real, z_mde, self.TAU)
         for i in range(len(z_real)):
@@ -1167,11 +1302,11 @@ class TestRenderizacaoGrade(unittest.TestCase):
 
     @staticmethod
     def _mde_constante(x, y):
-        return -0.20
+        return 0.0  # alvo: base vazia (cota zero)
 
     @staticmethod
     def _mde_constante_vetorizado(xs, ys):
-        return np.full_like(np.asarray(xs, dtype=np.float64), -0.20)
+        return np.zeros_like(np.asarray(xs, dtype=np.float64))
 
     def _parametros_camera(self, largura_mesa, comprimento_mesa, resolucao):
         largura_img, altura_img = resolucao
@@ -1188,11 +1323,11 @@ class TestRenderizacaoGrade(unittest.TestCase):
             largura_mesa, comprimento_mesa, resolucao,
         )
 
-        # Célula (0,0): X,Y ∈ [0,1) → pixels [0,100). Z=-0.19 vs alvo -0.20 → Verde.
-        # Célula (1,1): X,Y ∈ [1,2) → pixels [100,200). Z=-0.05 vs alvo -0.20 → Vermelho.
+        # Célula (0,0): X,Y ∈ [0,1) → pixels [0,100). Z=+0.01 vs alvo 0.0 → Verde.
+        # Célula (1,1): X,Y ∈ [1,2) → pixels [100,200). Z=+0.15 vs alvo 0.0 → Vermelho.
         pontos_mesa = np.array([
-            [0.5, 0.5, -0.19], [0.4, 0.6, -0.19], [0.6, 0.4, -0.19],
-            [1.5, 1.5, -0.05], [1.4, 1.6, -0.05], [1.6, 1.4, -0.05],
+            [0.5, 0.5, 0.01], [0.4, 0.6, 0.01], [0.6, 0.4, 0.01],
+            [1.5, 1.5, 0.15], [1.4, 1.6, 0.15], [1.6, 1.4, 0.15],
         ])
 
         for vetorizada in (None, self._mde_constante_vetorizado):
@@ -1234,6 +1369,182 @@ class TestRenderizacaoGrade(unittest.TestCase):
         )
         self.assertEqual(imagem.shape, (48, 64, 3))
         self.assertTrue(np.all(imagem == 0))
+
+
+# =====================================================================
+# 14. TESTE DE ACEITAÇÃO (Requisito 4) — fluxo empírico Passos A–E
+# =====================================================================
+
+class TestFluxoAceitacao(unittest.TestCase):
+    """
+    Reproduz ponta a ponta, com nuvens sintéticas, o fluxo de teste
+    empírico obrigatório da especificação:
+
+    - **Passo A** — o caixão está completamente vazio (só a base de
+      madeira, 2,7 m do sensor: 2,5 m até a tampa + 0,20 m de caixa).
+    - **Passo B** — o mapa alvo é o "Cubo Central" (+0,10 m no terço
+      central da mesa; 0,0 m — base vazia — no resto).
+    - **Passo C** — calibração oficial (modo tampa a 2,5 m) estabelece a
+      base vazia como cota zero → a base é projetada em VERDE (está na
+      altura certa do chão do cenário).
+    - **Passo D** — o centro pede um cubo e a caixa está vazia → o
+      centro é projetado em AZUL (falta volume).
+    - **Passo E** — um cubo físico de 10 cm é inserido no centro → o
+      Kinect lê a nova altura e o topo do cubo passa a ser VERDE.
+    """
+
+    LARGURA_MESA = 1.5
+    COMPRIMENTO_MESA = 1.5
+    PROFUNDIDADE_CAIXA = 0.20
+    DIST_KINECT_TAMPA = 2.5   # m — "Distância do Kinect até a Tampa de Calibração"
+    TAU = 0.02                # m — tolerância de acerto (VERDE dentro de ±2 cm)
+
+    # Sensor sintético: 60×60 px, fx=fy=60 → passo de ~4,5 cm na mesa,
+    # cobrindo o caixão inteiro (pontos fora de [0, 1.5) são filtrados
+    # pela discretização).
+    RES_PX = 60
+    FX = FY = 60.0
+    CX = CY = 30.0
+
+    N_CELULAS = 15            # células de 10 cm — grade de projeção
+    CELULA_CENTRO = (7, 7)    # x,y ∈ [0.70, 0.80) — dentro do cubo [0.50, 1.00]
+    CELULA_BORDA = (2, 2)     # x,y ∈ [0.20, 0.30) — base vazia, fora do cubo
+
+    DEPTH_TAMPA_MM = 2500     # tampa de calibração
+    DEPTH_BASE_MM = 2700      # base de madeira vazia
+    DEPTH_TOPO_CUBO_MM = 2600  # topo de um cubo físico de 10 cm sobre a base
+
+    VERMELHO = (0, 0, 255)
+    AZUL     = (255, 0, 0)
+    VERDE    = (0, 255, 0)
+
+    # ------------------------------------------------------------------
+    # Helpers — replicam o pipeline real de main.py
+    # ------------------------------------------------------------------
+
+    def _nuvem(self, depth_mm: np.ndarray) -> np.ndarray:
+        return profundidade_para_nuvem_mesa(
+            depth_mm, fx=self.FX, fy=self.FY, cx=self.CX, cy=self.CY,
+        )
+
+    def _calibrar_com_tampa(self) -> np.ndarray:
+        """Passo C: RANSAC sobre a tampa plana + T_shift (cota zero na base)."""
+        depth_tampa = np.full(
+            (self.RES_PX, self.RES_PX), self.DEPTH_TAMPA_MM, dtype=np.uint16
+        )
+        normal, d, centroide, X, Y, Z, T = pipeline_plano_e_base(
+            self._nuvem(depth_tampa), usar_ransac=True, semente_rng=42,
+        )
+        # Validação de sanidade (como em main._executar_calibracao)
+        distancia_medida = -float(centroide[2])
+        self.assertAlmostEqual(distancia_medida, self.DIST_KINECT_TAMPA, places=2)
+
+        T_shift = np.eye(4)
+        T_shift[0, 3] = self.LARGURA_MESA / 2.0
+        T_shift[1, 3] = self.COMPRIMENTO_MESA / 2.0
+        T_shift[2, 3] = self.PROFUNDIDADE_CAIXA  # cota zero desce até a base
+        return T_shift @ T
+
+    def _depth_caixa_vazia(self) -> np.ndarray:
+        """Passo A: caixão completamente vazio (base plana a 2,7 m)."""
+        return np.full(
+            (self.RES_PX, self.RES_PX), self.DEPTH_BASE_MM, dtype=np.uint16
+        )
+
+    def _depth_com_cubo_fisico(self) -> np.ndarray:
+        """Passo E: cubo físico de 10 cm inserido no terço central.
+
+        Um pixel pertence ao topo do cubo se o seu raio, na profundidade
+        do topo (2,6 m), atinge o terço central da mesa — a mesma
+        geometria pinhole usada pelo sensor real.
+        """
+        depth = self._depth_caixa_vazia()
+        z_topo = self.DEPTH_TOPO_CUBO_MM / 1000.0
+        for v in range(self.RES_PX):
+            for u in range(self.RES_PX):
+                x = (u - self.CX) * z_topo / self.FX + self.LARGURA_MESA / 2.0
+                y = (v - self.CY) * z_topo / self.FY + self.COMPRIMENTO_MESA / 2.0
+                if 0.50 <= x <= 1.00 and 0.50 <= y <= 1.00:
+                    depth[v, u] = self.DEPTH_TOPO_CUBO_MM
+        return depth
+
+    def _cores_da_grade(
+        self, depth_mm: np.ndarray, T_final: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Pipeline de um frame AR: nuvem → T_final → grade → cores."""
+        pontos_mesa = transformar_pontos(T_final, self._nuvem(depth_mm))
+        alturas, contagens = discretizar_nuvem_em_grade(
+            pontos_mesa, self.N_CELULAS, self.N_CELULAS,
+            self.LARGURA_MESA, self.COMPRIMENTO_MESA,
+        )
+
+        mde = AdaptadorMDE(
+            largura_mesa=self.LARGURA_MESA,
+            comprimento_mesa=self.COMPRIMENTO_MESA,
+            profundidade_caixa=self.PROFUNDIDADE_CAIXA,
+            tipo_mapa=TIPO_MAPA_CUBO,      # Passo B: mapa alvo "Cubo"
+        )
+        tam_celula = self.LARGURA_MESA / self.N_CELULAS
+        centros = (np.arange(self.N_CELULAS) + 0.5) * tam_celula
+        xx, yy = np.meshgrid(centros, centros)
+        z_alvo = mde.obter_z_alvo_array(xx, yy)
+
+        cores = cor_por_diferenca_vetorizado(alturas, z_alvo, self.TAU)
+        return cores, alturas, contagens
+
+    # ------------------------------------------------------------------
+    # O fluxo A → E
+    # ------------------------------------------------------------------
+
+    def test_fluxo_completo_passos_a_a_e(self):
+        lin_c, col_c = self.CELULA_CENTRO
+        lin_b, col_b = self.CELULA_BORDA
+
+        # Passo C: calibração com a tampa → cota zero na base vazia
+        T_final = self._calibrar_com_tampa()
+
+        # Passos A + C + D: caixão vazio, mapa Cubo
+        cores, alturas, contagens = self._cores_da_grade(
+            self._depth_caixa_vazia(), T_final,
+        )
+
+        self.assertGreater(contagens[lin_b, col_b], 0,
+                           "A célula de borda deveria ter leituras do Kinect")
+        self.assertGreater(contagens[lin_c, col_c], 0,
+                           "A célula central deveria ter leituras do Kinect")
+
+        # Passo C: base vazia lê ~0.0 e é projetada VERDE fora do cubo
+        self.assertAlmostEqual(alturas[lin_b, col_b], 0.0, places=3)
+        np.testing.assert_array_equal(
+            cores[lin_b, col_b], list(self.VERDE),
+            err_msg="Passo C: a base vazia (fora do cubo) deveria ser VERDE",
+        )
+
+        # Passo D: o centro pede +0.10 e está em 0.0 → AZUL (falta volume)
+        np.testing.assert_array_equal(
+            cores[lin_c, col_c], list(self.AZUL),
+            err_msg="Passo D: o centro vazio deveria ser AZUL (preencher)",
+        )
+
+        # Passo E: cubo físico de 10 cm inserido no centro
+        cores_e, alturas_e, contagens_e = self._cores_da_grade(
+            self._depth_com_cubo_fisico(), T_final,
+        )
+
+        self.assertGreater(contagens_e[lin_c, col_c], 0)
+        self.assertAlmostEqual(
+            alturas_e[lin_c, col_c], 0.10, places=3,
+            msg="Passo E: o Kinect deveria ler o topo do cubo a +0.10 m",
+        )
+        np.testing.assert_array_equal(
+            cores_e[lin_c, col_c], list(self.VERDE),
+            err_msg="Passo E: o topo do cubo físico deveria virar VERDE",
+        )
+        # E a base ao redor permanece VERDE
+        np.testing.assert_array_equal(
+            cores_e[lin_b, col_b], list(self.VERDE),
+            err_msg="Passo E: a base fora do cubo deveria continuar VERDE",
+        )
 
 
 # =====================================================================

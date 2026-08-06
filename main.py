@@ -9,8 +9,9 @@ Areia com Realidade Aumentada.  Funciona com ou sem Kinect conectado.
 Dimensões físicas reais
 -----------------------
 - Caixa de areia: 1,5 m × 1,5 m × 0,20 m de profundidade
-- Kinect montado a 2,5 m de altura
-- Areia: Z_mesa ∈ [-0,20 m, 0,0 m] (0,0 m = nível da tampa)
+- Kinect montado a 2,5 m acima da tampa de calibração
+- Areia: Z_mesa ∈ [0,0 m, +0,20 m] (0,0 m = base de madeira vazia;
+  alturas crescem para CIMA — formas dos mapas são volumes positivos)
 
 Janelas de saída
 ----------------
@@ -32,20 +33,29 @@ dimensões físicas reais da mesa ativa (``LARGURA_MESA`` ×
 com o caixão físico.  A tecla **M** alterna entre os dois em tempo
 real, a qualquer momento (IDLE ou AR_LOOP).
 
-Calibração da Tampa ("Lid Calibration")
-----------------------------------------
-Para evitar degeneração numérica do SVD e ruído de sensor, a calibração
-da mesa é feita **uma única vez**, com uma **tampa lisa e plana** colocada
-sobre toda a área do caixão — representando o plano de referência
-``Z_mesa = 0.0 m`` (nível máximo possível de areia).  Com a tampa
-removida, a areia ocupa sempre a faixa ``[-0.20 m, 0.0 m]``
-(fundo físico → nível da tampa).
+Calibração (dois modos, cota zero na BASE do caixão)
+-----------------------------------------------------
+A calibração é feita **uma única vez**, aplicando RANSAC sobre a nuvem
+de pontos de uma superfície plana de referência.  Há dois modos,
+escolhidos na GUI de configuração:
 
-O resultado da calibração (matriz ``T_final`` 4×4) é salvo em
+- **Tampa sobre as bordas (oficial, recomendado)** — o operador cobre
+  totalmente o caixão com uma tampa plana e opaca apoiada nas bordas.
+  Isso evita distorções matemáticas geradas por areia irregular.  O
+  plano detectado é a tampa; a **cota zero** é derivada dele descendo
+  ``profundidade_caixa`` (a base de madeira).
+- **Base vazia do caixão** — o caixão é esvaziado e o RANSAC detecta o
+  plano da própria base de madeira, que vira a cota zero diretamente.
+
+Nos dois casos, após a calibração a base vazia lê ``Z_mesa = 0.0`` e a
+areia ocupa a faixa positiva ``[0.0, +profundidade_caixa]``.
+
+O resultado (matriz ``T_final`` 4×4 + metadados, esquema v2) é salvo em
 ``calibration_data.json``.  Na próxima execução, esse arquivo é
 carregado automaticamente e a calibração manual é **pulada** — a
 tecla **C** permanece disponível a qualquer momento para recalibrar
-(por exemplo, se o sensor for reposicionado).
+(por exemplo, se o sensor for reposicionado).  Caches do esquema
+antigo (convenção de Z anterior) são descartados automaticamente.
 
 Máquina de Estados
 ------------------
@@ -55,15 +65,20 @@ INIT
     ``calibration_data.json``.  Se encontrado, pula direto para
     AR_LOOP; caso contrário, transiciona para IDLE.
 IDLE
-    Exibe o mapa de profundidade colorido enquanto aguarda o comando
-    de calibração.  Tecla **C** → transiciona para CALIBRACAO.
+    Exibe o mapa de profundidade colorido com as instruções passo a
+    passo do modo de calibração escolhido ("coloque a tampa..." /
+    "esvazie o caixão...").  Tecla **C** → transiciona para CALIBRACAO.
 CALIBRACAO
-    Captura a nuvem de pontos da tampa plana (que inclui moldura, piso
-    e ruído da sala, pois o FOV do Kinect é mais largo que o caixão)
-    → RANSAC (isola o plano dominante da tampa) → SVD (refina a normal
-    sobre os inliers) → Gram-Schmidt → Matriz 4×4 (``T_final``) → salva
-    em ``calibration_data.json``.  Ao concluir, transiciona
-    automaticamente para AR_LOOP.
+    Captura a nuvem de pontos da superfície de referência (que inclui
+    moldura, piso e ruído da sala, pois o FOV do Kinect é mais largo
+    que o caixão) → RANSAC (isola o plano dominante) → SVD (refina a
+    normal sobre os inliers) → Gram-Schmidt → validação de sanidade da
+    distância medida → Matriz 4×4 (``T_final``) → salva em
+    ``calibration_data.json``.  No modo tampa (sensor real),
+    transiciona para REMOVER_TAMPA; caso contrário, direto para AR_LOOP.
+REMOVER_TAMPA
+    Exibe em tela cheia a instrução "RETIRE A TAMPA" e aguarda o
+    operador confirmar com [ESPAÇO]/[ENTER] antes de iniciar o AR_LOOP.
 AR_LOOP
     Loop contínuo: captura → transforma → compara MDE → colore → projeta.
     Tecla **C** → volta para CALIBRACAO.
@@ -72,9 +87,10 @@ AR_LOOP
 Configuração
 ------------
 Nada é hardcoded: **todo** parâmetro físico ou de simulação (mapa,
-dimensões da mesa, altura do Kinect, tolerância de cor, resolução do
-projetor, malha de discretização, RANSAC, pá virtual) é definido pelo
-operador na janela de configuração (Tkinter) exibida ao iniciar —
+dimensões do caixão, distância do Kinect até a tampa de calibração,
+modo de calibração, tolerância de acerto, resolução do projetor, malha
+de discretização, RANSAC, pá virtual) é definido pelo operador — em
+**centímetros** — na janela de configuração (Tkinter) exibida ao iniciar —
 ver ``CONFIG_PADRAO`` e ``_abrir_gui_configuracao``. Os campos validam
 em tempo real e podem ser salvos/carregados como perfil ``.json`` pelos
 botões "Salvar Configuração" / "Carregar Configuração".
@@ -137,22 +153,36 @@ from mde_cartografia import AdaptadorMDE, TIPO_MAPA_CUBO, TIPO_MAPA_GAUSSIANA
 # atribuição em ``main()``). Também é o dicionário usado para preencher
 # campos ausentes ao carregar um perfil salvo mais antigo (compatível
 # com versões futuras que adicionem novos parâmetros).
+# Modos de calibração (superfície plana de referência usada pelo RANSAC)
+MODO_CALIBRACAO_TAMPA: str = "tampa"
+"""Método oficial: tampa plana e opaca apoiada sobre as bordas do caixão,
+cobrindo-o totalmente.  A cota zero (base de madeira) é derivada do plano
+da tampa descendo ``profundidade_caixa``."""
+
+MODO_CALIBRACAO_BASE: str = "base"
+"""Método alternativo: caixão completamente vazio; o RANSAC detecta o
+plano da própria base de madeira, que vira a cota zero diretamente."""
+
+# Todos os campos físicos da GUI usam CENTÍMETROS (mais intuitivo para o
+# operador); a conversão para metros — unidade interna do motor — é feita
+# uma única vez em ``iniciar()`` (GUI) → ``main()``.
 CONFIG_PADRAO: dict = {
     "caminho_geotiff": "",
     "tipo_mapa": TIPO_MAPA_CUBO,
-    "largura_mesa": 1.50,
-    "comprimento_mesa": 1.50,
-    "profundidade_caixa": 0.20,
-    "altura_kinect": 2.50,
-    "tolerancia_cor": 0.02,
+    "modo_calibracao": MODO_CALIBRACAO_TAMPA,
+    "largura_caixao_cm": 150.0,
+    "comprimento_caixao_cm": 150.0,
+    "profundidade_caixao_cm": 20.0,
+    "distancia_kinect_tampa_cm": 250.0,
+    "tolerancia_altura_cm": 2.0,
     "resolucao_largura": 640,
     "resolucao_altura": 480,
     "ransac_n_iter": 1000,
-    "ransac_limiar_dist": 0.03,
+    "ransac_limiar_cm": 3.0,
     "celulas_grade_x": 30,
     "celulas_grade_y": 30,
-    "raio_pa_virtual": 0.05,
-    "intensidade_pa_virtual": 0.008,
+    "raio_pa_virtual_cm": 5.0,
+    "intensidade_pa_virtual_cm": 0.8,
     "forcar_simulacao": False,
 }
 
@@ -161,6 +191,13 @@ CAMINHO_CALIBRACAO: str = "calibration_data.json"
 automaticamente no início; recriado sempre que a tecla [C] é usada.
 Caminho de infraestrutura interna — não é um parâmetro físico/de
 simulação, por isso não é exposto na GUI."""
+
+_TOLERANCIA_SANIDADE_M: float = 0.15
+"""Desvio máximo aceito (m) entre a distância sensor→plano medida pelo
+RANSAC e a distância informada pelo operador na GUI ("Distância do
+Kinect até a Tampa de Calibração").  Acima disso, a calibração é
+abortada com instruções — pega tampa mal posicionada, objeto errado
+dominando a cena ou medida digitada errada."""
 
 JANELA_PROJECAO: str = "Projecao_Areia"
 """Nome da janela OpenCV de projeção AR (para o projetor)."""
@@ -174,13 +211,15 @@ JANELA_GABARITO: str = "Gabarito_MDE"
 # configuração, então qualquer uso acidental antes disso falha alto e
 # claro (NameError) em vez de silenciosamente rodar com um valor de
 # fábrica que o operador nunca viu nem confirmou.
+# (internamente sempre em METROS — a GUI coleta em cm e converte)
 CAMINHO_GEOTIFF: str
 RESOLUCAO_PROJETOR: tuple[int, int]
 TOLERANCIA_COR: float
 LARGURA_MESA: float
 COMPRIMENTO_MESA: float
 PROFUNDIDADE_CAIXA: float
-ALTURA_KINECT: float
+DISTANCIA_KINECT_TAMPA: float
+MODO_CALIBRACAO: str
 RANSAC_N_ITER: int
 RANSAC_LIMIAR_DIST: float
 CELULAS_GRADE_X: int
@@ -210,6 +249,7 @@ class Estado(Enum):
     INIT = auto()
     IDLE = auto()
     CALIBRACAO = auto()
+    REMOVER_TAMPA = auto()
     AR_LOOP = auto()
     ENCERRAR = auto()
 
@@ -236,7 +276,8 @@ class DadosCalibracao:
     origem : str
         Origem da calibração ativa, para exibição no HUD: ``"nenhuma"``,
         ``"cache"`` (carregada de ``calibration_data.json``),
-        ``"manual (RANSAC)"`` ou ``"simulação"``.
+        ``"manual (RANSAC, tampa)"``, ``"manual (RANSAC, base)"`` ou
+        ``"simulação"``.
     """
 
     def __init__(self) -> None:
@@ -351,7 +392,7 @@ def _calcular_parametros_projecao(
     """Calcula os parâmetros do modelo de câmera (Tsai) do projetor.
 
     Mapeia a mesa lógica ``[0, LARGURA_MESA] × [0, COMPRIMENTO_MESA]``
-    (com ``Z = 0`` no plano da tampa) para a janela do projetor,
+    (com ``Z = 0`` na base de madeira do caixão) para a janela do projetor,
     usando uma câmera virtual olhando de cima (``rvec = 0``) a uma
     distância fixa ``d_cam``.  Esses parâmetros dependem apenas das
     dimensões da mesa e da resolução do projetor — são os mesmos tanto
@@ -412,25 +453,39 @@ def _tentar_carregar_calibracao_cache() -> Optional[DadosCalibracao]:
     return dados
 
 
-def _executar_calibracao(sensor: KinectSensor) -> DadosCalibracao:
-    """Calibração da Tampa ("Lid Calibration") — captura + RANSAC + SVD + Gram-Schmidt.
+def _executar_calibracao(sensor: KinectSensor, modo: str) -> DadosCalibracao:
+    """Calibração por plano de referência — captura + RANSAC + SVD + Gram-Schmidt.
 
-    Executada **uma única vez** com uma tampa lisa e plana cobrindo toda
-    a área do caixão, representando o plano de referência
-    ``Z_mesa = 0.0 m``.  O campo de visão do Kinect é **mais largo** que
-    o caixão de areia — a nuvem capturada inclui também a moldura de
-    madeira, o piso ao redor e ruído da sala.  Por isso o ajuste de
-    plano usa **RANSAC** (``pipeline_plano_e_base(..., usar_ransac=True)``)
-    para isolar o maior conjunto de pontos coplanares (a tampa) antes de
-    refinar a normal com SVD apenas sobre esses inliers, descartando
-    moldura/piso/ruído.  O RANSAC roda por ``RANSAC_N_ITER`` iterações
-    (padrão: 1000) com limiar de inlier ``RANSAC_LIMIAR_DIST`` (padrão:
-    0,03 m = 3 cm).
+    Executada **uma única vez**, com uma superfície plana de referência
+    visível ao sensor, conforme o ``modo``:
 
-    Ao final, a matriz resultante (``T_final``) é persistida em
-    ``calibration_data.json`` via ``salvar_matriz_calibracao`` — a
-    próxima execução carrega esse cache automaticamente
-    (``_tentar_carregar_calibracao_cache``), pulando a calibração manual.
+    - ``MODO_CALIBRACAO_TAMPA`` (oficial): tampa plana e opaca apoiada
+      sobre as bordas do caixão, cobrindo-o totalmente.  A cota zero
+      (base de madeira) é derivada descendo ``PROFUNDIDADE_CAIXA`` a
+      partir do plano da tampa.
+    - ``MODO_CALIBRACAO_BASE``: caixão completamente vazio; o plano
+      detectado (a própria base de madeira) é a cota zero.
+
+    O campo de visão do Kinect é **mais largo** que o caixão de areia —
+    a nuvem capturada inclui também a moldura de madeira, o piso ao
+    redor e ruído da sala.  Por isso o ajuste de plano usa **RANSAC**
+    (``pipeline_plano_e_base(..., usar_ransac=True)``) para isolar o
+    maior conjunto de pontos coplanares antes de refinar a normal com
+    SVD apenas sobre esses inliers, extraindo a equação do plano
+    ``ax + by + cz + d = 0``.  O RANSAC roda por ``RANSAC_N_ITER``
+    iterações (padrão: 1000) com limiar de inlier ``RANSAC_LIMIAR_DIST``
+    (padrão: 0,03 m = 3 cm).
+
+    **Validação de sanidade**: a distância medida do sensor ao plano é
+    comparada com a "Distância do Kinect até a Tampa de Calibração"
+    informada na GUI (no modo base, somada à profundidade do caixão).
+    Divergência acima de ``_TOLERANCIA_SANIDADE_M`` aborta a calibração
+    com uma mensagem explicando exatamente o que conferir.
+
+    Ao final, ``T_final`` + metadados (modo, equação do plano) são
+    persistidos em ``calibration_data.json`` (esquema v2) via
+    ``salvar_matriz_calibracao`` — a próxima execução carrega esse
+    cache automaticamente, pulando a calibração manual.
 
     No modo simulação, os pontos já estão em coordenadas da mesa
     (não há sensor físico nem tampa real), então ``T = identidade`` e
@@ -441,6 +496,8 @@ def _executar_calibracao(sensor: KinectSensor) -> DadosCalibracao:
     ----------
     sensor : KinectSensor
         Sensor (real ou simulado).
+    modo : str
+        ``MODO_CALIBRACAO_TAMPA`` ou ``MODO_CALIBRACAO_BASE``.
 
     Returns
     -------
@@ -450,13 +507,19 @@ def _executar_calibracao(sensor: KinectSensor) -> DadosCalibracao:
     Raises
     ------
     RuntimeError
-        Se a nuvem de pontos for insuficiente (< 10 pontos) ou se o
-        RANSAC não encontrar inliers suficientes para o plano da tampa.
+        Se a nuvem de pontos for insuficiente (< 10 pontos), se o
+        RANSAC não encontrar inliers suficientes para o plano, ou se a
+        distância medida ao plano divergir da distância informada na
+        GUI (tampa mal posicionada / valor errado no campo).
     """
     dados = DadosCalibracao()
+    nome_superficie = (
+        "TAMPA DE CALIBRAÇÃO" if modo == MODO_CALIBRACAO_TAMPA
+        else "BASE VAZIA DO CAIXÃO"
+    )
 
     print("\n" + "=" * 50)
-    print("  CALIBRAÇÃO DA TAMPA — RANSAC + SVD + Gram-Schmidt")
+    print(f"  CALIBRAÇÃO ({nome_superficie}) — RANSAC + SVD + Gram-Schmidt")
     print("=" * 50)
 
     # ── Modo Simulação: pontos já em coordenadas da mesa ──
@@ -464,30 +527,31 @@ def _executar_calibracao(sensor: KinectSensor) -> DadosCalibracao:
         dados.T = np.eye(4)
         dados.origem = "simulação"
         dados.normal = np.array([0.0, 0.0, 1.0])
-        # Z = 0.0 (nível da tampa) — não há sensor físico para capturar
-        # a tampa real, então assume-se a mesa já calibrada na origem.
+        # Z = 0.0 (base de madeira vazia) — não há sensor físico, então
+        # assume-se a mesa já calibrada na origem (cota zero na base).
         dados.centroide = np.array([LARGURA_MESA / 2.0, COMPRIMENTO_MESA / 2.0, 0.0])
         dados.camera_matrix, dados.dist_coeffs, dados.rvec, dados.tvec = (
             _calcular_parametros_projecao(RESOLUCAO_PROJETOR)
         )
 
         print("  Modo Simulação — calibração automática.")
-        print("  T = Identidade (pontos já em coordenadas da mesa, Z=0 na tampa).")
+        print("  T = Identidade (pontos já em coordenadas da mesa, Z=0 na base vazia).")
         print(f"  Projeção: fx={dados.camera_matrix[0,0]:.1f}, "
               f"fy={dados.camera_matrix[1,1]:.1f}")
         print("  ✓ Calibração concluída (simulação).")
         print("=" * 50 + "\n")
-        salvar_matriz_calibracao(dados.T, CAMINHO_CALIBRACAO)
+        salvar_matriz_calibracao(dados.T, CAMINHO_CALIBRACAO, modo="simulação")
         return dados
 
-    # ── Modo Real: captura (tampa + moldura + piso) → RANSAC → SVD → Gram-Schmidt ──
+    # ── Modo Real: captura (plano + moldura + piso) → RANSAC → SVD → Gram-Schmidt ──
     pontos = sensor.capturar_nuvem()
     if pontos.shape[0] < 10:
         raise RuntimeError(
-            "Nuvem com poucos pontos — verifique se a tampa está bem "
-            "posicionada e visível ao sensor."
+            "Nuvem com poucos pontos — verifique se a "
+            f"{nome_superficie.lower()} está bem posicionada e visível "
+            "ao sensor."
         )
-    print(f"  Pontos capturados (tampa + possíveis outliers): {pontos.shape[0]:,}")
+    print(f"  Pontos capturados (plano + possíveis outliers): {pontos.shape[0]:,}")
 
     normal, d, centroide, X, Y, Z, T = pipeline_plano_e_base(
         pontos,
@@ -496,21 +560,56 @@ def _executar_calibracao(sensor: KinectSensor) -> DadosCalibracao:
         limiar_dist=RANSAC_LIMIAR_DIST,
     )
 
-    # T leva o centroide do plano da tampa para a origem (0, 0, 0) no
-    # referencial da mesa (Z=0 já corresponde ao nível da tampa). Mas a
-    # nossa convenção de mesa é [0, L] × [0, C], com a origem em um
-    # canto.  Portanto, deslocamos T por (+L/2, +C/2) — apenas em X, Y —
-    # para que o centro físico da tampa (sob o Kinect) caia no centro
-    # lógico da mesa (L/2, C/2).  Sem este deslocamento, metade dos
-    # pontos teria coordenadas negativas e seria colapsada na coluna 0 /
-    # linha 0 da grade de discretização.
+    # ── Validação de sanidade: a distância medida ao plano deve bater
+    #    com a distância informada na GUI.  Como Z_mesa = -Z_real (ver
+    #    profundidade_para_nuvem_mesa), a distância sensor→plano é
+    #    simplesmente -centroide_z.  Uma divergência grande significa
+    #    tampa mal posicionada, objeto errado dominando a cena, ou
+    #    valor incorreto digitado no campo da GUI. ──
+    distancia_medida = -float(centroide[2])
+    if modo == MODO_CALIBRACAO_TAMPA:
+        distancia_esperada = DISTANCIA_KINECT_TAMPA
+        campo_gui = "Distância do Kinect até a Tampa de Calibração"
+    else:
+        distancia_esperada = DISTANCIA_KINECT_TAMPA + PROFUNDIDADE_CAIXA
+        campo_gui = ("Distância do Kinect até a Tampa de Calibração + "
+                     "Profundidade do Caixão")
+    desvio = abs(distancia_medida - distancia_esperada)
+    if desvio > _TOLERANCIA_SANIDADE_M:
+        raise RuntimeError(
+            f"A superfície plana detectada está a "
+            f"{distancia_medida * 100:.0f} cm do Kinect, mas o esperado "
+            f"({campo_gui}) é {distancia_esperada * 100:.0f} cm "
+            f"(desvio de {desvio * 100:.0f} cm > "
+            f"{_TOLERANCIA_SANIDADE_M * 100:.0f} cm permitidos). "
+            f"Confira se a {nome_superficie.lower()} cobre todo o campo "
+            "de visão do sensor e se as medidas digitadas na "
+            "configuração estão corretas."
+        )
+
+    # T leva o centroide do plano detectado para a origem (0, 0, 0) no
+    # referencial da mesa.  Dois deslocamentos completam a convenção:
+    #
+    # 1. XY: a mesa lógica é [0, L] × [0, C] com origem no canto, então
+    #    o centro físico do plano (sob o Kinect) é deslocado por
+    #    (+L/2, +C/2) para o centro lógico da mesa.  Sem isso, metade
+    #    dos pontos teria coordenadas negativas e seria colapsada na
+    #    coluna 0 / linha 0 da grade de discretização.
+    # 2. Z: a cota zero do sistema é a BASE DE MADEIRA do caixão
+    #    (alturas positivas para cima).  No modo tampa, o plano
+    #    detectado está PROFUNDIDADE_CAIXA acima da base, então T é
+    #    deslocado por +PROFUNDIDADE_CAIXA em Z (a tampa lê
+    #    Z = +profundidade; a base, Z = 0).  No modo base, o plano
+    #    detectado JÁ É a base — nenhum deslocamento em Z.
     T_shift = np.eye(4)
     T_shift[0, 3] = LARGURA_MESA / 2.0
     T_shift[1, 3] = COMPRIMENTO_MESA / 2.0
+    if modo == MODO_CALIBRACAO_TAMPA:
+        T_shift[2, 3] = PROFUNDIDADE_CAIXA
     T_final = T_shift @ T
 
     dados.T = T_final
-    dados.origem = "manual (RANSAC)"
+    dados.origem = f"manual (RANSAC, {modo})"
     dados.normal = normal
     dados.centroide = centroide
     dados.camera_matrix, dados.dist_coeffs, dados.rvec, dados.tvec = (
@@ -519,15 +618,21 @@ def _executar_calibracao(sensor: KinectSensor) -> DadosCalibracao:
 
     print(f"  RANSAC: {RANSAC_N_ITER} iterações, limiar de inlier "
           f"{RANSAC_LIMIAR_DIST * 100:.0f} cm (moldura/piso/ruído descartados).")
-    print(f"  Plano da tampa (SVD sobre os inliers): {normal[0]:.4f}x + {normal[1]:.4f}y "
+    print(f"  Plano detectado (SVD sobre os inliers): {normal[0]:.4f}x + {normal[1]:.4f}y "
           f"+ {normal[2]:.4f}z + {d:.2f} = 0")
-    print(f"  Centroide: ({centroide[0]:.3f}, {centroide[1]:.3f}, {centroide[2]:.3f})")
+    print(f"  Distância sensor → plano: {distancia_medida * 100:.1f} cm "
+          f"(esperado {distancia_esperada * 100:.0f} cm ✓)")
     print(f"  Mesa lógica: [0, {LARGURA_MESA:.2f}] × [0, {COMPRIMENTO_MESA:.2f}] m "
-          f"(centroide da tampa → centro, Z=0 na tampa)")
-    print(f"  Areia (após remover a tampa): Z_mesa ∈ [-{PROFUNDIDADE_CAIXA:.2f}, 0.00] m")
+          "(centro do plano → centro da mesa)")
+    print(f"  Cota zero: base de madeira vazia — areia em Z_mesa ∈ "
+          f"[0.00, +{PROFUNDIDADE_CAIXA:.2f}] m")
     print("  ✓ Calibração concluída.")
 
-    salvar_matriz_calibracao(dados.T, CAMINHO_CALIBRACAO)
+    salvar_matriz_calibracao(
+        dados.T, CAMINHO_CALIBRACAO,
+        modo=modo,
+        plano=np.array([normal[0], normal[1], normal[2], d]),
+    )
     print(f"  ✓ T_final salvo em '{CAMINHO_CALIBRACAO}'.")
     print("=" * 50 + "\n")
 
@@ -634,15 +739,15 @@ def _desenhar_legenda_hud(
     sobre a areia) nunca recebe este overlay — deve permanecer
     completamente limpa.
 
-    Regra de cores reproduzida na legenda (ver
-    ``motor_caixao_areia.cor_por_diferenca``):
+    Regra de cores reproduzida na legenda — paleta de "feedback de
+    ação" (ver ``motor_caixao_areia.cor_por_diferenca``):
 
     - **Vermelho** (0, 0, 255) — ``Z_real > Z_alvo + tolerancia``
-      ("TOO HIGH / Cavar": há areia demais, é preciso escavar).
+      (areia ALTA demais: o usuário precisa CAVAR).
     - **Azul** (255, 0, 0) — ``Z_real < Z_alvo - tolerancia``
-      ("TOO LOW / Preencher": falta areia, é preciso completar).
+      (areia BAIXA demais: o usuário precisa PREENCHER).
     - **Verde** (0, 255, 0) — dentro da tolerância
-      ("OK": altura já corresponde ao alvo do MDE).
+      (altura exata: nada a fazer).
 
     Parameters
     ----------
@@ -659,16 +764,16 @@ def _desenhar_legenda_hud(
     altura_img, largura_img = imagem.shape[:2]
 
     itens_cor = [
-        (_HUD_VERMELHO, "TOO HIGH (Cavar)"),
-        (_HUD_AZUL,     "TOO LOW (Preencher)"),
-        (_HUD_VERDE,    "OK (Alvo atingido)"),
+        (_HUD_VERMELHO, "Areia ALTA demais -> CAVE"),
+        (_HUD_AZUL,     "Falta areia -> PREENCHA"),
+        (_HUD_VERDE,    "Altura correta (OK)"),
     ]
 
     fonte = cv2.FONT_HERSHEY_SIMPLEX
     escala = 0.5
     espessura = 1
     altura_linha = 22
-    largura_caixa = 260
+    largura_caixa = 300
     n_linhas = 1 + len(itens_cor) + len(linhas_estado)
     altura_caixa = 14 + altura_linha * n_linhas
 
@@ -751,6 +856,89 @@ def _linhas_estado_sistema(
     return linhas
 
 
+def _desenhar_painel_central(
+    imagem: np.ndarray,
+    linhas: list[str],
+    cor_destaque: tuple[int, int, int] = (0, 255, 255),
+) -> None:
+    """Desenha um painel central semi-transparente com linhas de texto
+    grandes — usado pelo passo a passo de calibração (estado IDLE) e
+    pela tela "RETIRE A TAMPA" (estado REMOVER_TAMPA).
+
+    A primeira linha é tratada como título (maior e na cor de
+    destaque); as demais, como corpo.  Texto em ASCII simples — as
+    fontes Hershey do OpenCV não renderizam acentos.
+
+    Parameters
+    ----------
+    imagem : np.ndarray, shape (H, W, 3), dtype uint8
+        Frame BGR anotado **in-place**.
+    linhas : list[str]
+        Linhas de texto; a primeira é o título.
+    cor_destaque : tuple[int, int, int]
+        Cor BGR do título.
+    """
+    altura_img, largura_img = imagem.shape[:2]
+    fonte = cv2.FONT_HERSHEY_SIMPLEX
+    escala_titulo, escala_corpo = 0.8, 0.6
+    altura_linha = 34
+
+    altura_painel = 30 + altura_linha * len(linhas)
+    y0 = max(0, (altura_img - altura_painel) // 2)
+    y1 = min(altura_img - 1, y0 + altura_painel)
+
+    roi = imagem[y0:y1, :]
+    overlay = roi.copy()
+    cv2.rectangle(overlay, (0, 0), (largura_img, y1 - y0), (20, 20, 20), -1)
+    cv2.addWeighted(overlay, 0.75, roi, 0.25, 0, dst=roi)
+
+    y = y0 + altura_linha
+    for i, linha in enumerate(linhas):
+        escala = escala_titulo if i == 0 else escala_corpo
+        cor = cor_destaque if i == 0 else (255, 255, 255)
+        (tw, _), _ = cv2.getTextSize(linha, fonte, escala, 2)
+        x = max(10, (largura_img - tw) // 2)
+        cv2.putText(imagem, linha, (x, y), fonte, escala, cor, 2, cv2.LINE_AA)
+        y += altura_linha
+
+
+def _desenhar_instrucoes_calibracao(imagem: np.ndarray, modo: str) -> None:
+    """Sobrepõe o passo a passo de calibração do modo escolhido (estado
+    IDLE) — instruções "à prova de idiotas", direto na janela de
+    projeção, para que o operador saiba exatamente o que fazer sem
+    consultar documentação.
+
+    Parameters
+    ----------
+    imagem : np.ndarray, shape (H, W, 3), dtype uint8
+        Frame BGR anotado **in-place**.
+    modo : str
+        ``MODO_CALIBRACAO_TAMPA``, ``MODO_CALIBRACAO_BASE`` ou
+        ``"simulacao"`` (sensor ausente — calibração automática).
+    """
+    if modo == "simulacao":
+        linhas = [
+            "MODO SIMULACAO - SEM SENSOR FISICO",
+            "Pressione [C] para calibrar automaticamente",
+            "(a caixa virtual nasce vazia, cota zero na base)",
+        ]
+    elif modo == MODO_CALIBRACAO_TAMPA:
+        linhas = [
+            "CALIBRACAO PENDENTE - MODO TAMPA",
+            "PASSO 1: Apoie a TAMPA plana e opaca sobre as bordas,",
+            "cobrindo TODO o caixao de areia",
+            "PASSO 2: Pressione [C] para detectar o plano da tampa",
+        ]
+    else:
+        linhas = [
+            "CALIBRACAO PENDENTE - MODO BASE VAZIA",
+            "PASSO 1: ESVAZIE o caixao por completo",
+            "(somente a base de madeira visivel ao sensor)",
+            "PASSO 2: Pressione [C] para detectar o plano da base",
+        ]
+    _desenhar_painel_central(imagem, linhas)
+
+
 # =====================================================================
 # GUI de Configuração Inicial (CustomTkinter — flat/Material, dark/light)
 # =====================================================================
@@ -773,10 +961,12 @@ def _abrir_gui_configuracao() -> Optional[dict]:
     simulação; todos vêm do dicionário devolvido por esta janela.
 
     Layout compacto em abas (``CTkTabview``) — "Mapa Tático",
-    "Dimensões Físicas" e "Simulação Avançada" — com campos organizados
-    em grade de 2 colunas, para que a janela inteira caiba em ~700 px
-    de altura em vez de crescer verticalmente com uma lista longa de
-    campos empilhados.
+    "Dimensões do Caixão", "Calibração" e "Avançado" — com campos
+    organizados em grade de 2 colunas, para que a janela inteira caiba
+    em ~700 px de altura em vez de crescer verticalmente com uma lista
+    longa de campos empilhados.  **Todos os campos físicos usam
+    centímetros** (nomes de rótulo descritivos, à prova de erro); a
+    conversão para metros acontece uma única vez em ``iniciar()``.
 
     Cada campo numérico é validado em tempo real (``trace_add`` na
     ``StringVar``): a borda fica vermelha e a mensagem de erro aparece
@@ -812,11 +1002,13 @@ def _abrir_gui_configuracao() -> Optional[dict]:
     var_tipo_mapa = tk.StringVar(value=CONFIG_PADRAO["tipo_mapa"])
     var_demo = tk.BooleanVar(value=False)
 
-    var_largura = tk.StringVar(value=str(CONFIG_PADRAO["largura_mesa"]))
-    var_comprimento = tk.StringVar(value=str(CONFIG_PADRAO["comprimento_mesa"]))
-    var_altura_caixa = tk.StringVar(value=str(CONFIG_PADRAO["profundidade_caixa"]))
-    var_altura_kinect = tk.StringVar(value=str(CONFIG_PADRAO["altura_kinect"]))
-    var_tolerancia = tk.StringVar(value=str(CONFIG_PADRAO["tolerancia_cor"]))
+    var_modo_calibracao = tk.StringVar(value=CONFIG_PADRAO["modo_calibracao"])
+
+    var_largura = tk.StringVar(value=str(CONFIG_PADRAO["largura_caixao_cm"]))
+    var_comprimento = tk.StringVar(value=str(CONFIG_PADRAO["comprimento_caixao_cm"]))
+    var_altura_caixa = tk.StringVar(value=str(CONFIG_PADRAO["profundidade_caixao_cm"]))
+    var_distancia_kinect = tk.StringVar(value=str(CONFIG_PADRAO["distancia_kinect_tampa_cm"]))
+    var_tolerancia = tk.StringVar(value=str(CONFIG_PADRAO["tolerancia_altura_cm"]))
 
     var_res_largura = tk.StringVar(value=str(CONFIG_PADRAO["resolucao_largura"]))
     var_res_altura = tk.StringVar(value=str(CONFIG_PADRAO["resolucao_altura"]))
@@ -824,10 +1016,10 @@ def _abrir_gui_configuracao() -> Optional[dict]:
     var_grade_y = tk.StringVar(value=str(CONFIG_PADRAO["celulas_grade_y"]))
 
     var_ransac_iter = tk.StringVar(value=str(CONFIG_PADRAO["ransac_n_iter"]))
-    var_ransac_limiar = tk.StringVar(value=str(CONFIG_PADRAO["ransac_limiar_dist"]))
+    var_ransac_limiar = tk.StringVar(value=str(CONFIG_PADRAO["ransac_limiar_cm"]))
 
-    var_raio_pa = tk.StringVar(value=str(CONFIG_PADRAO["raio_pa_virtual"]))
-    var_intensidade_pa = tk.StringVar(value=str(CONFIG_PADRAO["intensidade_pa_virtual"]))
+    var_raio_pa = tk.StringVar(value=str(CONFIG_PADRAO["raio_pa_virtual_cm"]))
+    var_intensidade_pa = tk.StringVar(value=str(CONFIG_PADRAO["intensidade_pa_virtual_cm"]))
     var_forcar_sim = tk.BooleanVar(value=CONFIG_PADRAO["forcar_simulacao"])
 
     # ── Validação em tempo real (borda vermelha + foco em azul) ──
@@ -899,21 +1091,56 @@ def _abrir_gui_configuracao() -> Optional[dict]:
             "caminho_geotiff": var_caminho.get(),
             "tipo_mapa": var_tipo_mapa.get(),
             "usar_demo": var_demo.get(),
-            "largura_mesa": var_largura.get(),
-            "comprimento_mesa": var_comprimento.get(),
-            "profundidade_caixa": var_altura_caixa.get(),
-            "altura_kinect": var_altura_kinect.get(),
-            "tolerancia_cor": var_tolerancia.get(),
+            "modo_calibracao": var_modo_calibracao.get(),
+            "largura_caixao_cm": var_largura.get(),
+            "comprimento_caixao_cm": var_comprimento.get(),
+            "profundidade_caixao_cm": var_altura_caixa.get(),
+            "distancia_kinect_tampa_cm": var_distancia_kinect.get(),
+            "tolerancia_altura_cm": var_tolerancia.get(),
             "resolucao_largura": var_res_largura.get(),
             "resolucao_altura": var_res_altura.get(),
             "ransac_n_iter": var_ransac_iter.get(),
-            "ransac_limiar_dist": var_ransac_limiar.get(),
+            "ransac_limiar_cm": var_ransac_limiar.get(),
             "celulas_grade_x": var_grade_x.get(),
             "celulas_grade_y": var_grade_y.get(),
-            "raio_pa_virtual": var_raio_pa.get(),
-            "intensidade_pa_virtual": var_intensidade_pa.get(),
+            "raio_pa_virtual_cm": var_raio_pa.get(),
+            "intensidade_pa_virtual_cm": var_intensidade_pa.get(),
             "forcar_simulacao": var_forcar_sim.get(),
         }
+
+    # Perfis salvos por versões antigas usavam METROS e outros nomes de
+    # chave (ex.: "largura_mesa": "1.5").  Para não interpretar 1.5 m
+    # como 1.5 cm silenciosamente, cada chave antiga é convertida
+    # explicitamente (×100) para a chave nova em cm.
+    _CHAVES_ANTIGAS_M_PARA_CM = {
+        "largura_mesa": "largura_caixao_cm",
+        "comprimento_mesa": "comprimento_caixao_cm",
+        "profundidade_caixa": "profundidade_caixao_cm",
+        "altura_kinect": "distancia_kinect_tampa_cm",
+        "tolerancia_cor": "tolerancia_altura_cm",
+        "ransac_limiar_dist": "ransac_limiar_cm",
+        "raio_pa_virtual": "raio_pa_virtual_cm",
+        "intensidade_pa_virtual": "intensidade_pa_virtual_cm",
+    }
+
+    def _migrar_perfil_antigo(dados: dict) -> dict:
+        migrado = dict(dados)
+        houve_migracao = False
+        for chave_m, chave_cm in _CHAVES_ANTIGAS_M_PARA_CM.items():
+            if chave_cm not in migrado and chave_m in migrado:
+                try:
+                    migrado[chave_cm] = str(float(migrado[chave_m]) * 100.0)
+                    houve_migracao = True
+                except (TypeError, ValueError):
+                    pass
+        if houve_migracao:
+            messagebox.showinfo(
+                "Perfil Antigo Convertido",
+                "Este perfil foi salvo por uma versão anterior (valores em "
+                "metros).  Os campos foram convertidos automaticamente para "
+                "centímetros — confira antes de iniciar.",
+            )
+        return migrado
 
     def salvar_configuracao() -> None:
         caminho = filedialog.asksaveasfilename(
@@ -945,25 +1172,29 @@ def _abrir_gui_configuracao() -> Optional[dict]:
             messagebox.showerror("Erro ao Carregar", f"Não foi possível ler o arquivo:\n{e}")
             return
 
+        dados = _migrar_perfil_antigo(dados)
+
         var_caminho.set(str(dados.get("caminho_geotiff", CONFIG_PADRAO["caminho_geotiff"])))
         var_tipo_mapa.set(dados.get("tipo_mapa", CONFIG_PADRAO["tipo_mapa"]))
         var_demo.set(bool(dados.get("usar_demo", False)))
-        var_largura.set(str(dados.get("largura_mesa", CONFIG_PADRAO["largura_mesa"])))
-        var_comprimento.set(str(dados.get("comprimento_mesa", CONFIG_PADRAO["comprimento_mesa"])))
-        var_altura_caixa.set(str(dados.get("profundidade_caixa", CONFIG_PADRAO["profundidade_caixa"])))
-        var_altura_kinect.set(str(dados.get("altura_kinect", CONFIG_PADRAO["altura_kinect"])))
-        var_tolerancia.set(str(dados.get("tolerancia_cor", CONFIG_PADRAO["tolerancia_cor"])))
+        var_modo_calibracao.set(dados.get("modo_calibracao", CONFIG_PADRAO["modo_calibracao"]))
+        var_largura.set(str(dados.get("largura_caixao_cm", CONFIG_PADRAO["largura_caixao_cm"])))
+        var_comprimento.set(str(dados.get("comprimento_caixao_cm", CONFIG_PADRAO["comprimento_caixao_cm"])))
+        var_altura_caixa.set(str(dados.get("profundidade_caixao_cm", CONFIG_PADRAO["profundidade_caixao_cm"])))
+        var_distancia_kinect.set(str(dados.get("distancia_kinect_tampa_cm", CONFIG_PADRAO["distancia_kinect_tampa_cm"])))
+        var_tolerancia.set(str(dados.get("tolerancia_altura_cm", CONFIG_PADRAO["tolerancia_altura_cm"])))
         var_res_largura.set(str(dados.get("resolucao_largura", CONFIG_PADRAO["resolucao_largura"])))
         var_res_altura.set(str(dados.get("resolucao_altura", CONFIG_PADRAO["resolucao_altura"])))
         var_ransac_iter.set(str(dados.get("ransac_n_iter", CONFIG_PADRAO["ransac_n_iter"])))
-        var_ransac_limiar.set(str(dados.get("ransac_limiar_dist", CONFIG_PADRAO["ransac_limiar_dist"])))
+        var_ransac_limiar.set(str(dados.get("ransac_limiar_cm", CONFIG_PADRAO["ransac_limiar_cm"])))
         var_grade_x.set(str(dados.get("celulas_grade_x", CONFIG_PADRAO["celulas_grade_x"])))
         var_grade_y.set(str(dados.get("celulas_grade_y", CONFIG_PADRAO["celulas_grade_y"])))
-        var_raio_pa.set(str(dados.get("raio_pa_virtual", CONFIG_PADRAO["raio_pa_virtual"])))
-        var_intensidade_pa.set(str(dados.get("intensidade_pa_virtual", CONFIG_PADRAO["intensidade_pa_virtual"])))
+        var_raio_pa.set(str(dados.get("raio_pa_virtual_cm", CONFIG_PADRAO["raio_pa_virtual_cm"])))
+        var_intensidade_pa.set(str(dados.get("intensidade_pa_virtual_cm", CONFIG_PADRAO["intensidade_pa_virtual_cm"])))
         var_forcar_sim.set(bool(dados.get("forcar_simulacao", False)))
 
         ao_alternar_demo()
+        _sincronizar_seg_modo_calibracao()
         _atualizar_estado_geral()
         messagebox.showinfo("Configuração Carregada", f"Configuração carregada de:\n{caminho}")
 
@@ -1011,8 +1242,9 @@ def _abrir_gui_configuracao() -> Optional[dict]:
     tabview = ctk.CTkTabview(root, corner_radius=12)
     tabview.grid(row=2, column=0, sticky="nsew", padx=20, pady=(0, 8))
     tab_mapa = tabview.add("Mapa Tático")
-    tab_dim = tabview.add("Dimensões Físicas")
-    tab_avancado = tabview.add("Simulação Avançada")
+    tab_dim = tabview.add("Dimensões do Caixão")
+    tab_calib = tabview.add("Calibração")
+    tab_avancado = tabview.add("Avançado")
 
     # ── Aba: Mapa Tático ──
     card_mapa = ctk.CTkFrame(tab_mapa, corner_radius=10)
@@ -1073,35 +1305,80 @@ def _abrir_gui_configuracao() -> Optional[dict]:
     seg_tipo_mapa.configure(command=ao_escolher_tipo_mapa)
     seg_tipo_mapa.set("Cubo Central" if var_tipo_mapa.get() == TIPO_MAPA_CUBO else "Morro Gaussiano")
 
-    # ── Aba: Dimensões Físicas (grade 2 colunas) ──
+    # ── Aba: Dimensões do Caixão (grade 2 colunas, tudo em cm) ──
     card_dim = ctk.CTkFrame(tab_dim, corner_radius=10)
     card_dim.pack(fill="x", padx=6, pady=6)
     card_dim.grid_columnconfigure((0, 1), weight=1)
 
-    _registrar_campo(card_dim, 0, 0, "Largura da Mesa — X (m)", var_largura, "largura_mesa", "Largura da mesa")
-    _registrar_campo(card_dim, 0, 1, "Comprimento da Mesa — Y (m)", var_comprimento, "comprimento_mesa", "Comprimento da mesa")
-    _registrar_campo(card_dim, 1, 0, "Profundidade da Caixa — Z (m)", var_altura_caixa, "profundidade_caixa", "Profundidade da caixa")
-    _registrar_campo(card_dim, 1, 1, "Altura de Montagem do Kinect (m)", var_altura_kinect, "altura_kinect", "Altura do Kinect")
-    _registrar_campo(card_dim, 2, 0, "Tolerância de Cor — ± (m)", var_tolerancia, "tolerancia_cor", "Tolerância de cor")
+    _registrar_campo(card_dim, 0, 0, "Largura interna do caixão de areia — eixo X (cm)", var_largura, "largura_caixao_cm", "Largura do caixão")
+    _registrar_campo(card_dim, 0, 1, "Comprimento interno do caixão de areia — eixo Y (cm)", var_comprimento, "comprimento_caixao_cm", "Comprimento do caixão")
+    _registrar_campo(card_dim, 1, 0, "Profundidade do caixão — da borda superior até a base de madeira (cm)", var_altura_caixa, "profundidade_caixao_cm", "Profundidade do caixão")
 
-    # ── Aba: Simulação Avançada (scrollable, grade 2 colunas) ──
+    # ── Aba: Calibração (superfície de referência + parâmetros) ──
+    card_calib = ctk.CTkFrame(tab_calib, corner_radius=10)
+    card_calib.pack(fill="x", padx=6, pady=6)
+    card_calib.grid_columnconfigure((0, 1), weight=1)
+
+    ctk.CTkLabel(
+        card_calib,
+        text=("Método oficial: apoie uma tampa plana e opaca sobre as bordas, "
+              "cobrindo todo o caixão, e pressione [C] na janela de projeção. "
+              "O RANSAC detecta o plano da tampa e define a cota zero na base "
+              "de madeira (alturas crescem para cima)."),
+        font=ctk.CTkFont(size=12), text_color=("gray30", "gray70"),
+        wraplength=540, anchor="w", justify="left",
+    ).grid(row=0, column=0, columnspan=2, sticky="ew", padx=10, pady=(10, 4))
+
+    _ROTULO_MODO_CALIBRACAO = {
+        MODO_CALIBRACAO_TAMPA: "Tampa sobre as bordas (recomendado)",
+        MODO_CALIBRACAO_BASE: "Base vazia do caixão",
+    }
+    _MODO_POR_ROTULO = {v: k for k, v in _ROTULO_MODO_CALIBRACAO.items()}
+
+    ctk.CTkLabel(
+        card_calib, text="Superfície plana usada na calibração:",
+        font=ctk.CTkFont(size=12), anchor="w",
+    ).grid(row=1, column=0, columnspan=2, sticky="w", padx=10, pady=(8, 0))
+
+    def ao_escolher_modo_calibracao(rotulo: str) -> None:
+        var_modo_calibracao.set(_MODO_POR_ROTULO[rotulo])
+
+    seg_modo_calibracao = ctk.CTkSegmentedButton(
+        card_calib, values=list(_ROTULO_MODO_CALIBRACAO.values()),
+        command=ao_escolher_modo_calibracao,
+    )
+    seg_modo_calibracao.grid(row=2, column=0, columnspan=2, sticky="ew", padx=10, pady=(4, 8))
+
+    def _sincronizar_seg_modo_calibracao() -> None:
+        modo = var_modo_calibracao.get()
+        if modo not in _ROTULO_MODO_CALIBRACAO:
+            modo = MODO_CALIBRACAO_TAMPA
+            var_modo_calibracao.set(modo)
+        seg_modo_calibracao.set(_ROTULO_MODO_CALIBRACAO[modo])
+
+    _sincronizar_seg_modo_calibracao()
+
+    _registrar_campo(card_calib, 3, 0, "Distância do Kinect até a Tampa de Calibração (cm)", var_distancia_kinect, "distancia_kinect_tampa_cm", "Distância Kinect → tampa")
+    _registrar_campo(card_calib, 3, 1, "Tolerância de acerto da areia — pinta VERDE dentro de ± (cm)", var_tolerancia, "tolerancia_altura_cm", "Tolerância de acerto")
+    _registrar_campo(card_calib, 4, 0, "RANSAC — distância máxima de um ponto ao plano (cm)", var_ransac_limiar, "ransac_limiar_cm", "Limiar de inlier do RANSAC")
+    _registrar_campo(card_calib, 4, 1, "RANSAC — número de tentativas de detecção do plano", var_ransac_iter, "ransac_n_iter", "Iterações do RANSAC", inteiro=True)
+
+    # ── Aba: Avançado (scrollable, grade 2 colunas) ──
     card_avancado = ctk.CTkScrollableFrame(tab_avancado, corner_radius=10, label_text="")
     card_avancado.pack(fill="both", expand=True, padx=6, pady=6)
     card_avancado.grid_columnconfigure((0, 1), weight=1)
 
     _registrar_campo(card_avancado, 0, 0, "Resolução do Projetor — Largura (px)", var_res_largura, "resolucao_largura", "Resolução (largura)", inteiro=True)
     _registrar_campo(card_avancado, 0, 1, "Resolução do Projetor — Altura (px)", var_res_altura, "resolucao_altura", "Resolução (altura)", inteiro=True)
-    _registrar_campo(card_avancado, 1, 0, "Malha — Colunas (eixo X)", var_grade_x, "celulas_grade_x", "Colunas da malha", inteiro=True)
-    _registrar_campo(card_avancado, 1, 1, "Malha — Linhas (eixo Y)", var_grade_y, "celulas_grade_y", "Linhas da malha", inteiro=True)
-    _registrar_campo(card_avancado, 2, 0, "RANSAC — Iterações", var_ransac_iter, "ransac_n_iter", "Iterações do RANSAC", inteiro=True)
-    _registrar_campo(card_avancado, 2, 1, "RANSAC — Limiar de Inlier (m)", var_ransac_limiar, "ransac_limiar_dist", "Limiar de inlier do RANSAC")
-    _registrar_campo(card_avancado, 3, 0, "Pá Virtual — Raio (m)", var_raio_pa, "raio_pa_virtual", "Raio da pá virtual")
-    _registrar_campo(card_avancado, 3, 1, "Pá Virtual — Intensidade (m)", var_intensidade_pa, "intensidade_pa_virtual", "Intensidade da pá virtual")
+    _registrar_campo(card_avancado, 1, 0, "Malha de projeção — Colunas (eixo X)", var_grade_x, "celulas_grade_x", "Colunas da malha", inteiro=True)
+    _registrar_campo(card_avancado, 1, 1, "Malha de projeção — Linhas (eixo Y)", var_grade_y, "celulas_grade_y", "Linhas da malha", inteiro=True)
+    _registrar_campo(card_avancado, 2, 0, "Pá Virtual (simulação) — Raio de ação (cm)", var_raio_pa, "raio_pa_virtual_cm", "Raio da pá virtual")
+    _registrar_campo(card_avancado, 2, 1, "Pá Virtual (simulação) — Areia por clique (cm)", var_intensidade_pa, "intensidade_pa_virtual_cm", "Intensidade da pá virtual")
 
     ctk.CTkSwitch(
         card_avancado, text="Forçar Modo Simulação (ignorar Kinect conectado)",
         variable=var_forcar_sim, font=ctk.CTkFont(size=12),
-    ).grid(row=4, column=0, columnspan=2, sticky="w", padx=8, pady=(10, 4))
+    ).grid(row=3, column=0, columnspan=2, sticky="w", padx=8, pady=(10, 4))
 
     # ── Rodapé fixo: erro + botão INICIAR (linha 3, sempre visível) ──
     frame_rodape = ctk.CTkFrame(root, fg_color="transparent")
@@ -1117,22 +1394,25 @@ def _abrir_gui_configuracao() -> Optional[dict]:
     def iniciar():
         # Os campos já foram validados em tempo real (trace_add) — aqui
         # apenas convertemos, já que btn_iniciar só fica habilitado
-        # quando todas as mensagens de erro estão vazias.
+        # quando todas as mensagens de erro estão vazias.  Os campos
+        # físicos da GUI estão em CENTÍMETROS; o motor trabalha em
+        # METROS — a divisão por 100 acontece uma única vez aqui.
         resultado["caminho_geotiff"] = "" if var_demo.get() else var_caminho.get()
         resultado["tipo_mapa"] = var_tipo_mapa.get()
-        resultado["largura_mesa"] = float(var_largura.get())
-        resultado["comprimento_mesa"] = float(var_comprimento.get())
-        resultado["profundidade_caixa"] = float(var_altura_caixa.get())
-        resultado["altura_kinect"] = float(var_altura_kinect.get())
-        resultado["tolerancia_cor"] = float(var_tolerancia.get())
+        resultado["modo_calibracao"] = var_modo_calibracao.get()
+        resultado["largura_mesa"] = float(var_largura.get()) / 100.0
+        resultado["comprimento_mesa"] = float(var_comprimento.get()) / 100.0
+        resultado["profundidade_caixa"] = float(var_altura_caixa.get()) / 100.0
+        resultado["distancia_kinect_tampa"] = float(var_distancia_kinect.get()) / 100.0
+        resultado["tolerancia_cor"] = float(var_tolerancia.get()) / 100.0
         resultado["resolucao_largura"] = int(var_res_largura.get())
         resultado["resolucao_altura"] = int(var_res_altura.get())
         resultado["ransac_n_iter"] = int(var_ransac_iter.get())
-        resultado["ransac_limiar_dist"] = float(var_ransac_limiar.get())
+        resultado["ransac_limiar_dist"] = float(var_ransac_limiar.get()) / 100.0
         resultado["celulas_grade_x"] = int(var_grade_x.get())
         resultado["celulas_grade_y"] = int(var_grade_y.get())
-        resultado["raio_pa_virtual"] = float(var_raio_pa.get())
-        resultado["intensidade_pa_virtual"] = float(var_intensidade_pa.get())
+        resultado["raio_pa_virtual"] = float(var_raio_pa.get()) / 100.0
+        resultado["intensidade_pa_virtual"] = float(var_intensidade_pa.get()) / 100.0
         resultado["forcar_simulacao"] = var_forcar_sim.get()
         root.destroy()
 
@@ -1186,7 +1466,7 @@ def main() -> None:
         sys.exit(0)
 
     global CAMINHO_GEOTIFF, LARGURA_MESA, COMPRIMENTO_MESA, PROFUNDIDADE_CAIXA
-    global ALTURA_KINECT, TOLERANCIA_COR, RESOLUCAO_PROJETOR
+    global DISTANCIA_KINECT_TAMPA, MODO_CALIBRACAO, TOLERANCIA_COR, RESOLUCAO_PROJETOR
     global RANSAC_N_ITER, RANSAC_LIMIAR_DIST, CELULAS_GRADE_X, CELULAS_GRADE_Y
     global RAIO_PA_VIRTUAL, INTENSIDADE_PA_VIRTUAL, FORCAR_SIMULACAO
 
@@ -1194,7 +1474,8 @@ def main() -> None:
     LARGURA_MESA = config["largura_mesa"]
     COMPRIMENTO_MESA = config["comprimento_mesa"]
     PROFUNDIDADE_CAIXA = config["profundidade_caixa"]
-    ALTURA_KINECT = config["altura_kinect"]
+    DISTANCIA_KINECT_TAMPA = config["distancia_kinect_tampa"]
+    MODO_CALIBRACAO = config["modo_calibracao"]
     TOLERANCIA_COR = config["tolerancia_cor"]
     RESOLUCAO_PROJETOR = (config["resolucao_largura"], config["resolucao_altura"])
     RANSAC_N_ITER = config["ransac_n_iter"]
@@ -1211,8 +1492,9 @@ def main() -> None:
     print("║     CAIXÃO DE AREIA — AR Sandbox                ║")
     print("║     PFC Engenharia de Computação — AMAN 2026    ║")
     print(f"║     Mesa: {LARGURA_MESA} m × {COMPRIMENTO_MESA} m × {PROFUNDIDADE_CAIXA} m")
-    print(f"║     Kinect: {ALTURA_KINECT} m de altura                     ║")
-    print(f"║     Faixa Z_mesa: [-{PROFUNDIDADE_CAIXA:.2f}, 0.00] m         ║")
+    print(f"║     Kinect → tampa: {DISTANCIA_KINECT_TAMPA} m               ║")
+    print(f"║     Calibração: modo '{MODO_CALIBRACAO}'                ║")
+    print(f"║     Faixa Z_mesa: [0.00, +{PROFUNDIDADE_CAIXA:.2f}] m (base = 0) ║")
     print("╚══════════════════════════════════════════════════╝")
     print()
 
@@ -1238,7 +1520,7 @@ def main() -> None:
                     largura_mesa=LARGURA_MESA,
                     comprimento_mesa=COMPRIMENTO_MESA,
                     profundidade_caixa=PROFUNDIDADE_CAIXA,
-                    altura_kinect=ALTURA_KINECT,
+                    altura_kinect=DISTANCIA_KINECT_TAMPA,
                 )
             except Exception as e:
                 logger.error("Falha crítica ao criar KinectSensor: %s", e)
@@ -1278,7 +1560,12 @@ def main() -> None:
             print(f"  [{JANELA_GABARITO}] Heatmap do MDE + legenda de cores + HUD de estado")
             print()
             print("Teclas:")
-            print("  [C] Calibrar com a tampa plana (RANSAC + SVD + Gram-Schmidt)")
+            if MODO_CALIBRACAO == MODO_CALIBRACAO_TAMPA:
+                print("  [C] Calibrar — tampa plana sobre as bordas "
+                      "(RANSAC + SVD + Gram-Schmidt)")
+            else:
+                print("  [C] Calibrar — base vazia do caixão "
+                      "(RANSAC + SVD + Gram-Schmidt)")
             print("  [M] Alternar mapa sintético (Cubo Central <-> Morro Gaussiano)")
             print("  [F] Tela cheia ON/OFF (janela de projeção)")
             print("  [Q] ou [ESC] Encerrar")
@@ -1297,17 +1584,27 @@ def main() -> None:
 
         # ── IDLE ──────────────────────────────────────────
         elif estado == Estado.IDLE:
-            # Exibir profundidade colorida enquanto aguarda calibração —
-            # janela de projeção permanece limpa, sem HUD/legenda.
+            # Exibir profundidade colorida + passo a passo de calibração
+            # do modo escolhido.  (Nesta fase de preparação a janela de
+            # projeção ainda não está sobre areia — o overlay de
+            # instruções é projetado sobre a tampa/base e guia o
+            # operador; ele desaparece no AR_LOOP.)
             profundidade = sensor.capturar_profundidade()
             imagem = KinectSensor.profundidade_para_imagem(profundidade)
+            _desenhar_instrucoes_calibracao(
+                imagem,
+                "simulacao" if sensor.esta_simulando else MODO_CALIBRACAO,
+            )
             cv2.imshow(JANELA_PROJECAO, imagem)
 
             # HUD (legenda de cores + estado do sistema) na janela de
             # controle Gabarito_MDE — nunca sobre a projeção física.
             gabarito_display = imagem_gabarito.copy()
             linhas_estado = _linhas_estado_sistema("IDLE", calibracao, sensor, mde)
-            linhas_estado.append("[C] Calibrar (tampa plana)  |  [Q] Sair")
+            if MODO_CALIBRACAO == MODO_CALIBRACAO_TAMPA:
+                linhas_estado.append("[C] Calibrar (tampa sobre as bordas)  |  [Q] Sair")
+            else:
+                linhas_estado.append("[C] Calibrar (base vazia)  |  [Q] Sair")
             _desenhar_legenda_hud(gabarito_display, linhas_estado, TOLERANCIA_COR)
             cv2.imshow(JANELA_GABARITO, gabarito_display)
 
@@ -1327,15 +1624,50 @@ def main() -> None:
 
         # ── CALIBRACAO ────────────────────────────────────
         elif estado == Estado.CALIBRACAO:
-            logger.info("Estado: CALIBRACAO")
+            logger.info("Estado: CALIBRACAO (modo %s)", MODO_CALIBRACAO)
             try:
-                calibracao = _executar_calibracao(sensor)
-                estado = Estado.AR_LOOP
+                calibracao = _executar_calibracao(sensor, MODO_CALIBRACAO)
+                if (MODO_CALIBRACAO == MODO_CALIBRACAO_TAMPA
+                        and not sensor.esta_simulando):
+                    # A tampa ainda está sobre o caixão — sem removê-la o
+                    # AR_LOOP pintaria a tampa inteira de vermelho.
+                    estado = Estado.REMOVER_TAMPA
+                else:
+                    estado = Estado.AR_LOOP
             except RuntimeError as e:
                 logger.error("Calibração falhou: %s", e)
                 print(f"[ERRO] {e}")
                 print("[ERRO] Voltando para IDLE — tente novamente com [C].")
                 estado = Estado.IDLE
+
+        # ── REMOVER_TAMPA ─────────────────────────────────
+        elif estado == Estado.REMOVER_TAMPA:
+            largura_proj, altura_proj = RESOLUCAO_PROJETOR
+            imagem = np.zeros((altura_proj, largura_proj, 3), dtype=np.uint8)
+            _desenhar_painel_central(
+                imagem,
+                [
+                    "CALIBRACAO CONCLUIDA!",
+                    "PASSO 3: RETIRE A TAMPA do caixao de areia",
+                    "PASSO 4: Pressione [ESPACO] ou [ENTER] para iniciar",
+                ],
+                cor_destaque=(0, 255, 0),
+            )
+            cv2.imshow(JANELA_PROJECAO, imagem)
+
+            gabarito_display = imagem_gabarito.copy()
+            linhas_estado = _linhas_estado_sistema(
+                "REMOVER_TAMPA", calibracao, sensor, mde
+            )
+            linhas_estado.append("Retire a tampa e pressione [ESPACO]")
+            _desenhar_legenda_hud(gabarito_display, linhas_estado, TOLERANCIA_COR)
+            cv2.imshow(JANELA_GABARITO, gabarito_display)
+
+            tecla = cv2.waitKey(30) & 0xFF
+            if tecla in (ord(" "), 13):  # ESPAÇO ou ENTER
+                estado = Estado.AR_LOOP
+            elif tecla in (ord("q"), ord("Q"), 27):
+                estado = Estado.ENCERRAR
 
         # ── AR_LOOP ───────────────────────────────────────
         elif estado == Estado.AR_LOOP:

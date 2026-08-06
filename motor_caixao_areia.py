@@ -244,21 +244,21 @@ def profundidade_para_nuvem_mesa(
     alcance_max: float = 4.5,
 ) -> np.ndarray:
     """Converte um mapa de profundidade bruto em nuvem 3D já na convenção
-    de sinal usada pela mesa (Z maior = mais próximo do sensor).
+    de sinal usada pela mesa (Z maior = mais próximo do sensor = mais alto).
 
     O SDK do Kinect mede **profundidade** — a distância do sensor até a
     superfície — que **aumenta** à medida que o ponto fica mais **longe**
-    do sensor (mais fundo na caixa).  Já a convenção adotada para
-    ``Z_mesa`` (ver módulo ``kinect_sensor``) é o oposto: ``Z_mesa = 0``
-    no nível da tampa (ponto mais **próximo** do sensor) e valores mais
-    **negativos** conforme a areia se afasta do sensor (mais funda).
+    do sensor (mais baixo na caixa).  Já a convenção adotada para
+    ``Z_mesa`` (ver módulo ``kinect_sensor``) é o oposto: Z **cresce**
+    conforme a areia sobe (se aproxima do sensor).  Por isso o sinal de
+    Z é invertido aqui; a **origem** (cota zero na base de madeira do
+    caixão) é definida depois, pela matriz de calibração ``T_final``
+    (ver ``main._executar_calibracao``), que translada os pontos para a
+    faixa física ``[0.0, +profundidade_caixa]``.
 
-    Se essa inversão de sinal não fosse feita aqui, o pipeline de ajuste
-    de plano (SVD + Gram-Schmidt), que por convenção geral atribui Z
-    **crescente** a pontos que se afastam do centroide ao longo da
-    normal, produziria ``Z_mesa`` **positivo** para a areia (mais longe
-    do sensor do que a tampa) — o oposto da faixa física exigida
-    ``[-profundidade_caixa, 0.0]``.  A correção é aplicada apenas na
+    Sem essa inversão de sinal, um monte de areia (mais perto do sensor)
+    apareceria como Z_mesa MENOR que a base — exatamente o defeito de
+    "cubo renderizado como buraco".  A correção é aplicada apenas na
     componente Z de saída; X e Y usam a profundidade **verdadeira**
     (positiva) na razão de back-projection pinhole, preservando a
     geometria correta do plano imagem:
@@ -429,14 +429,24 @@ def transformar_pontos(T: np.ndarray, pontos: np.ndarray) -> np.ndarray:
 # 2b. PERSISTÊNCIA DA CALIBRAÇÃO — Cache JSON (calibration_data.json)
 # ============================================================================
 
+VERSAO_ESQUEMA_CALIBRACAO: int = 2
+"""Versão do esquema de ``calibration_data.json``.  A versão 2 introduziu
+a convenção de cota zero na BASE do caixão (alturas positivas para cima)
+e os metadados de modo/plano — caches de versões anteriores usam a
+convenção antiga (Z=0 na tampa, alturas negativas) e são descartados
+por ``carregar_matriz_calibracao`` para forçar uma recalibração."""
+
+
 def salvar_matriz_calibracao(
     T: np.ndarray,
     caminho: Union[str, Path] = "calibration_data.json",
+    modo: Optional[str] = None,
+    plano: Optional[np.ndarray] = None,
 ) -> None:
     """Salva a matriz de transformação 4×4 ``T_final`` em um arquivo JSON.
 
-    A calibração da tampa (Passos 1 e 2) é cara e deve ser feita apenas
-    uma vez; este cache evita repeti-la a cada execução do sistema.
+    A calibração (RANSAC + SVD + Gram-Schmidt) é cara e deve ser feita
+    apenas uma vez; este cache evita repeti-la a cada execução.
 
     Parameters
     ----------
@@ -444,6 +454,13 @@ def salvar_matriz_calibracao(
         Matriz de transformação afim Kinect → Mesa (``T_final``).
     caminho : str | Path
         Caminho do arquivo JSON de destino.
+    modo : str | None
+        Superfície usada na calibração: ``"tampa"``, ``"base"`` ou
+        ``"simulação"`` — apenas metadado informativo.
+    plano : np.ndarray | None
+        Coeficientes ``[a, b, c, d]`` do plano detectado pelo RANSAC
+        (``ax + by + cz + d = 0``, referencial do sensor) — apenas
+        metadado informativo/diagnóstico.
 
     Raises
     ------
@@ -453,7 +470,14 @@ def salvar_matriz_calibracao(
     if T.shape != (4, 4):
         raise ValueError(f"T_final deve ter shape (4, 4), recebido {T.shape}")
 
-    dados = {"T_final": T.tolist()}
+    dados: dict = {
+        "versao": VERSAO_ESQUEMA_CALIBRACAO,
+        "T_final": T.tolist(),
+    }
+    if modo is not None:
+        dados["modo_calibracao"] = modo
+    if plano is not None:
+        dados["plano_ransac"] = [float(v) for v in np.asarray(plano).ravel()]
     Path(caminho).write_text(json.dumps(dados, indent=2), encoding="utf-8")
 
 
@@ -461,6 +485,11 @@ def carregar_matriz_calibracao(
     caminho: Union[str, Path] = "calibration_data.json",
 ) -> Optional[np.ndarray]:
     """Carrega a matriz ``T_final`` de um arquivo JSON de cache, se existir.
+
+    Caches de esquema antigo (sem ``"versao"`` ou com versão diferente
+    de ``VERSAO_ESQUEMA_CALIBRACAO``) são rejeitados: foram gerados com
+    a convenção de Z anterior (cota zero na tampa) e produziriam alturas
+    erradas — o chamador deve recalibrar.
 
     Parameters
     ----------
@@ -470,9 +499,10 @@ def carregar_matriz_calibracao(
     Returns
     -------
     np.ndarray, shape (4, 4) | None
-        A matriz de calibração, ou ``None`` se o arquivo não existir ou
-        estiver corrompido/incompleto (nesse caso, o chamador deve
-        recalibrar em vez de propagar a exceção).
+        A matriz de calibração, ou ``None`` se o arquivo não existir,
+        estiver corrompido/incompleto ou for de uma versão de esquema
+        incompatível (nesse caso, o chamador deve recalibrar em vez de
+        propagar a exceção).
     """
     caminho = Path(caminho)
     if not caminho.is_file():
@@ -480,8 +510,10 @@ def carregar_matriz_calibracao(
 
     try:
         dados = json.loads(caminho.read_text(encoding="utf-8"))
+        if dados.get("versao") != VERSAO_ESQUEMA_CALIBRACAO:
+            return None
         T = np.array(dados["T_final"], dtype=np.float64)
-    except (json.JSONDecodeError, KeyError, ValueError, TypeError):
+    except (json.JSONDecodeError, KeyError, ValueError, TypeError, AttributeError):
         return None
 
     if T.shape != (4, 4):
@@ -1106,9 +1138,10 @@ def pipeline_plano_e_base(
 ) -> Tuple[np.ndarray, float, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Executa os Passos 1 e 2 de uma só vez (ajuste de plano + base + matriz).
 
-    A calibração oficial do sistema (Seção "Lid Calibration") é feita **uma
-    única vez**, com a tampa lisa e plana colocada sobre toda a área do
-    caixão de areia.  O campo de visão do Kinect, porém, é **mais largo**
+    A calibração oficial do sistema é feita **uma única vez**, com uma
+    superfície plana de referência — a tampa lisa colocada sobre as bordas
+    do caixão (modo "tampa") ou a base de madeira vazia (modo "base").
+    O campo de visão do Kinect, porém, é **mais largo**
     que o caixão: a nuvem capturada inclui também a moldura de madeira, o
     piso ao redor e ruído da sala — outliers que não pertencem ao plano da
     tampa.  Por isso ``usar_ransac=True`` é o modo usado pela calibração
