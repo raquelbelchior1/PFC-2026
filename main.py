@@ -86,14 +86,15 @@ AR_LOOP
 
 Configuração
 ------------
-Nada é hardcoded: **todo** parâmetro físico ou de simulação (mapa,
-dimensões do caixão, distância do Kinect até a tampa de calibração,
-modo de calibração, tolerância de acerto, resolução do projetor, malha
-de discretização, RANSAC, pá virtual) é definido pelo operador — em
-**centímetros** — na janela de configuração (Tkinter) exibida ao iniciar —
-ver ``CONFIG_PADRAO`` e ``_abrir_gui_configuracao``. Os campos validam
-em tempo real e podem ser salvos/carregados como perfil ``.json`` pelos
-botões "Salvar Configuração" / "Carregar Configuração".
+A GUI de configuração (Tkinter) coleta apenas os parâmetros que o
+operador **precisa** informar: mapa tático, modo de calibração,
+dimensões do caixão, distância do Kinect até a tampa e tolerância de
+acerto — em **centímetros** (ver ``CONFIG_PADRAO`` e
+``_abrir_gui_configuracao``).  Os campos validam em tempo real e podem
+ser salvos/carregados como perfil ``.json``.  Parâmetros internos com
+valores estáveis (resolução do projetor, malha de discretização,
+RANSAC, pá virtual) são constantes do módulo — ver a seção "Parâmetros
+internos fixos".
 """
 
 from __future__ import annotations
@@ -131,11 +132,13 @@ from motor_caixao_areia import (
     transformar_pontos,
     gerar_mapa_cores,
     projetar_pontos_tsai,
-    encontrar_cantos_tabuleiro,
-    calibrar_projetor,
     gerar_imagem_grade_cores,
     salvar_matriz_calibracao,
     carregar_matriz_calibracao,
+    gerar_imagem_tabuleiro,
+    pipeline_calibracao_projetor,
+    salvar_calibracao_projetor,
+    carregar_calibracao_projetor,
 )
 
 # ── Adaptador MDE ────────────────────────────────────────────────────
@@ -175,15 +178,6 @@ CONFIG_PADRAO: dict = {
     "profundidade_caixao_cm": 20.0,
     "distancia_kinect_tampa_cm": 250.0,
     "tolerancia_altura_cm": 2.0,
-    "resolucao_largura": 640,
-    "resolucao_altura": 480,
-    "ransac_n_iter": 1000,
-    "ransac_limiar_cm": 3.0,
-    "celulas_grade_x": 30,
-    "celulas_grade_y": 30,
-    "raio_pa_virtual_cm": 5.0,
-    "intensidade_pa_virtual_cm": 0.8,
-    "forcar_simulacao": False,
 }
 
 CAMINHO_CALIBRACAO: str = "calibration_data.json"
@@ -213,20 +207,43 @@ JANELA_GABARITO: str = "Gabarito_MDE"
 # fábrica que o operador nunca viu nem confirmou.
 # (internamente sempre em METROS — a GUI coleta em cm e converte)
 CAMINHO_GEOTIFF: str
-RESOLUCAO_PROJETOR: tuple[int, int]
 TOLERANCIA_COR: float
 LARGURA_MESA: float
 COMPRIMENTO_MESA: float
 PROFUNDIDADE_CAIXA: float
 DISTANCIA_KINECT_TAMPA: float
 MODO_CALIBRACAO: str
-RANSAC_N_ITER: int
-RANSAC_LIMIAR_DIST: float
-CELULAS_GRADE_X: int
-CELULAS_GRADE_Y: int
-RAIO_PA_VIRTUAL: float
-INTENSIDADE_PA_VIRTUAL: float
-FORCAR_SIMULACAO: bool
+
+# ---------------------------------------------------------------------
+# Parâmetros internos fixos — valores estáveis que não dependem da
+# montagem física do exercício e por isso não são expostos na GUI
+# (mantê-los editáveis só aumentava a chance de erro do operador).
+RESOLUCAO_PROJETOR: tuple[int, int] = (640, 480)
+"""Resolução (largura, altura) da janela de projeção em pixels."""
+
+RANSAC_N_ITER: int = 1000
+"""Iterações do RANSAC na detecção do plano de calibração."""
+
+RANSAC_LIMIAR_DIST: float = 0.03
+"""Limiar de inlier do RANSAC (m): distância máxima ponto→plano."""
+
+CELULAS_GRADE_X: int = 30
+CELULAS_GRADE_Y: int = 30
+"""Malha de discretização da projeção (colunas × linhas)."""
+
+RAIO_PA_VIRTUAL: float = 0.05
+"""Raio de ação da pá virtual no modo simulação (m)."""
+
+INTENSIDADE_PA_VIRTUAL: float = 0.008
+"""Areia movida por clique da pá virtual no modo simulação (m)."""
+
+FORCAR_SIMULACAO: bool = False
+"""O modo simulação entra automaticamente quando não há Kinect
+conectado — o antigo switch da GUI só forçava esse fallback."""
+
+TABULEIRO_CALIBRACAO: tuple[int, int] = (7, 5)
+"""Cantos internos do tabuleiro projetado na calibração do projetor
+(passos 1–6 do pipeline do orientador) — 7×5 cantos = 8×6 casas."""
 
 # =====================================================================
 # Logging
@@ -287,7 +304,9 @@ class DadosCalibracao:
         self.origem: str = "nenhuma"
 
         # Parâmetros do projetor — defaults realistas (mock)
-        # Serão sobrescritos quando a calibração real for feita
+        # Sobrescritos pela câmera virtual (fallback) e, quando o
+        # pipeline de calibração do projetor roda, pelos valores REAIS
+        # de Tsai/OpenCV (ver _executar_calibracao_projetor).
         self.camera_matrix: np.ndarray = np.array([
             [500.0,   0.0, 320.0],
             [  0.0, 500.0, 240.0],
@@ -296,6 +315,8 @@ class DadosCalibracao:
         self.dist_coeffs: np.ndarray = np.zeros(5)
         self.rvec: np.ndarray = np.zeros((3, 1))
         self.tvec: np.ndarray = np.array([[0.0], [0.0], [1.0]])
+        self.P: Optional[np.ndarray] = None
+        self.origem_projetor: str = "virtual (nadir aproximado)"
 
     @property
     def esta_calibrado(self) -> bool:
@@ -389,14 +410,16 @@ def _callback_mouse(evento: int, x_pixel: int, y_pixel: int,
 def _calcular_parametros_projecao(
     resolucao: tuple[int, int],
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Calcula os parâmetros do modelo de câmera (Tsai) do projetor.
+    """**Fallback**: câmera virtual nadir para quando a calibração REAL
+    do projetor (``_executar_calibracao_projetor``) ainda não rodou.
 
     Mapeia a mesa lógica ``[0, LARGURA_MESA] × [0, COMPRIMENTO_MESA]``
     (com ``Z = 0`` na base de madeira do caixão) para a janela do projetor,
     usando uma câmera virtual olhando de cima (``rvec = 0``) a uma
-    distância fixa ``d_cam``.  Esses parâmetros dependem apenas das
-    dimensões da mesa e da resolução do projetor — são os mesmos tanto
-    para uma calibração recém-feita quanto para uma carregada do cache.
+    distância fixa ``d_cam``.  É exato no modo simulação (onde o
+    "projetor" é uma janela na tela); no hardware real é apenas uma
+    aproximação — a projeção correta vem do pipeline de 7 passos
+    (tabuleiro → RGB → cantos → 3D Gram-Schmidt → Tsai/OpenCV → P).
 
     Parameters
     ----------
@@ -447,10 +470,118 @@ def _tentar_carregar_calibracao_cache() -> Optional[DadosCalibracao]:
         _calcular_parametros_projecao(RESOLUCAO_PROJETOR)
     )
 
+    # Calibração do projetor persistida (bloco "projetor" do JSON) —
+    # se existir, substitui a câmera virtual pelo K·[R|T] real.
+    cal_proj = carregar_calibracao_projetor(CAMINHO_CALIBRACAO)
+    if cal_proj is not None:
+        dados.camera_matrix = cal_proj.camera_matrix
+        dados.dist_coeffs = cal_proj.dist_coeffs
+        dados.rvec = cal_proj.rvec
+        dados.tvec = cal_proj.tvec
+        dados.P = cal_proj.P
+        dados.origem_projetor = "Tsai/OpenCV (cache)"
+        print("[Calibração] ✓ Calibração do projetor carregada do cache "
+              f"(erro RMS {cal_proj.erro_rms_px:.2f} px).")
+
     print(f"[Calibração] ✓ Cache carregado de '{CAMINHO_CALIBRACAO}' "
           "— calibração manual pulada.")
     print("[Calibração]   Pressione [C] a qualquer momento para recalibrar.")
     return dados
+
+
+def _executar_calibracao_projetor(
+    sensor: KinectSensor,
+    calibracao: DadosCalibracao,
+) -> bool:
+    """Pipeline de calibração do projetor — 7 passos do orientador.
+
+    Executado logo após a calibração do plano (a superfície de
+    referência ainda está no lugar, plana e visível):
+
+    1. Projeta o tabuleiro com vértices conhecidos na janela do projetor.
+    2. Operador confirma com [ESPAÇO] → captura RGB + profundidade.
+    3–6. ``pipeline_calibracao_projetor`` (motor): detecção de cantos,
+         conversão para 3D no referencial de Gram-Schmidt, Tsai inverse
+         pinhole via OpenCV, sanity check do eixo Z e montagem de P.
+    7. Os parâmetros reais substituem a câmera virtual em
+       ``calibracao`` — o AR_LOOP passa a projetar via K·[R|T] real.
+
+    A tecla [ESC] pula a etapa (mantém o fallback virtual).  Uma
+    detecção falhada permite tentar de novo sem sair do laço.
+
+    Returns
+    -------
+    bool
+        ``True`` se a calibração real foi aplicada; ``False`` se pulada
+        ou impossível (sem stream RGB / modo simulação).
+    """
+    if sensor.esta_simulando:
+        print("[Calibração Projetor] Modo simulação — sem câmera RGB; "
+              "mantendo projeção virtual (exata na simulação).")
+        return False
+
+    imagem_tab, cantos_proj = gerar_imagem_tabuleiro(
+        RESOLUCAO_PROJETOR, TABULEIRO_CALIBRACAO,
+    )
+
+    print("\n" + "=" * 50)
+    print("  CALIBRAÇÃO DO PROJETOR — Tsai inverse pinhole (OpenCV)")
+    print("=" * 50)
+    print("  Tabuleiro projetado na superfície de referência.")
+    print("  [ESPAÇO]/[ENTER] captura e calibra  |  [ESC] pula "
+          "(mantém projeção virtual aproximada)")
+
+    while True:
+        cv2.imshow(JANELA_PROJECAO, imagem_tab)
+        tecla = cv2.waitKey(30) & 0xFF
+
+        if tecla == 27:  # ESC — pular
+            print("  Etapa pulada — usando projeção virtual (fallback).")
+            print("=" * 50 + "\n")
+            return False
+
+        if tecla not in (ord(" "), 13):
+            continue
+
+        imagem_rgb = sensor.capturar_rgb()
+        if imagem_rgb is None:
+            print("  [ERRO] Backend do sensor não forneceu frame RGB — "
+                  "mantendo projeção virtual.")
+            print("=" * 50 + "\n")
+            return False
+        profundidade = sensor.capturar_profundidade()
+
+        try:
+            cal = pipeline_calibracao_projetor(
+                imagem_rgb,
+                profundidade,
+                sensor.intrinsicos,
+                calibracao.T,
+                cantos_proj,
+                TABULEIRO_CALIBRACAO,
+                RESOLUCAO_PROJETOR,
+            )
+        except RuntimeError as e:
+            print(f"  [FALHA] {e}")
+            print("  Ajuste e tente de novo com [ESPAÇO], ou [ESC] para pular.")
+            continue
+
+        calibracao.camera_matrix = cal.camera_matrix
+        calibracao.dist_coeffs = cal.dist_coeffs
+        calibracao.rvec = cal.rvec
+        calibracao.tvec = cal.tvec
+        calibracao.P = cal.P
+        calibracao.origem_projetor = "Tsai/OpenCV (tabuleiro projetado)"
+
+        salvar_calibracao_projetor(cal, CAMINHO_CALIBRACAO)
+        if not cal.sanidade_ok:
+            print("  [ATENÇÃO] Sanity check da rotação FALHOU — a pose "
+                  "estimada não condiz com projetor montado na vertical. "
+                  "Confira a montagem e recalibre se necessário.")
+        print(f"  ✓ Projetor calibrado (erro RMS {cal.erro_rms_px:.2f} px) "
+              f"e salvo em '{CAMINHO_CALIBRACAO}'.")
+        print("=" * 50 + "\n")
+        return True
 
 
 def _executar_calibracao(sensor: KinectSensor, modo: str) -> DadosCalibracao:
@@ -658,7 +789,7 @@ def _processar_frame_ar(
     1. **Captura** — obtém a nuvem 3D do Kinect.
     2. **Transformação** — aplica T (Kinect → Mesa) nos pontos.
     3. **Discretização** — agrupa os pontos em células da grade e
-       calcula :math:`Z_{real\_media}` por célula (filtra ruído).
+       calcula a média de Z real por célula (filtra ruído).
     4. **Comparação MDE** — consulta :math:`Z_{MDE}` no centro de
        cada célula e classifica a cor (Vermelho / Azul / Verde).
     5. **Projeção Tsai** — projeta os vértices da grade em lote
@@ -709,6 +840,7 @@ def _processar_frame_ar(
         camera_matrix=calibracao.camera_matrix,
         dist_coeffs=calibracao.dist_coeffs,
         resolucao=resolucao,
+        P=calibracao.P,
     )
 
     return imagem
@@ -955,13 +1087,14 @@ _COR_ACCENT_INICIAR_HOVER = ("#1B5E20", "#2E7D32")
 
 def _abrir_gui_configuracao() -> Optional[dict]:
     """Exibe janela CustomTkinter (tema flat, dark/light automático) para
-    o operador configurar **todo** o pipeline AR (mapa, dimensões
-    físicas, sensor, projeção, malha, calibração e pá virtual) antes de
-    iniciar — nenhum desses parâmetros é hardcoded no motor de
-    simulação; todos vêm do dicionário devolvido por esta janela.
+    o operador informar os parâmetros **essenciais** do exercício antes
+    de iniciar: mapa tático, modo de calibração, dimensões físicas do
+    caixão, distância do Kinect e tolerância de acerto.  Parâmetros
+    internos estáveis (resolução, malha, RANSAC, pá virtual) são
+    constantes do módulo — ver "Parâmetros internos fixos".
 
     Layout compacto em abas (``CTkTabview``) — "Mapa Tático",
-    "Dimensões do Caixão", "Calibração" e "Avançado" — com campos
+    "Dimensões do Caixão" e "Calibração" — com campos
     organizados em grade de 2 colunas, para que a janela inteira caiba
     em ~700 px de altura em vez de crescer verticalmente com uma lista
     longa de campos empilhados.  **Todos os campos físicos usam
@@ -1009,18 +1142,6 @@ def _abrir_gui_configuracao() -> Optional[dict]:
     var_altura_caixa = tk.StringVar(value=str(CONFIG_PADRAO["profundidade_caixao_cm"]))
     var_distancia_kinect = tk.StringVar(value=str(CONFIG_PADRAO["distancia_kinect_tampa_cm"]))
     var_tolerancia = tk.StringVar(value=str(CONFIG_PADRAO["tolerancia_altura_cm"]))
-
-    var_res_largura = tk.StringVar(value=str(CONFIG_PADRAO["resolucao_largura"]))
-    var_res_altura = tk.StringVar(value=str(CONFIG_PADRAO["resolucao_altura"]))
-    var_grade_x = tk.StringVar(value=str(CONFIG_PADRAO["celulas_grade_x"]))
-    var_grade_y = tk.StringVar(value=str(CONFIG_PADRAO["celulas_grade_y"]))
-
-    var_ransac_iter = tk.StringVar(value=str(CONFIG_PADRAO["ransac_n_iter"]))
-    var_ransac_limiar = tk.StringVar(value=str(CONFIG_PADRAO["ransac_limiar_cm"]))
-
-    var_raio_pa = tk.StringVar(value=str(CONFIG_PADRAO["raio_pa_virtual_cm"]))
-    var_intensidade_pa = tk.StringVar(value=str(CONFIG_PADRAO["intensidade_pa_virtual_cm"]))
-    var_forcar_sim = tk.BooleanVar(value=CONFIG_PADRAO["forcar_simulacao"])
 
     # ── Validação em tempo real (borda vermelha + foco em azul) ──
     entradas: dict[str, ctk.CTkEntry] = {}
@@ -1097,15 +1218,6 @@ def _abrir_gui_configuracao() -> Optional[dict]:
             "profundidade_caixao_cm": var_altura_caixa.get(),
             "distancia_kinect_tampa_cm": var_distancia_kinect.get(),
             "tolerancia_altura_cm": var_tolerancia.get(),
-            "resolucao_largura": var_res_largura.get(),
-            "resolucao_altura": var_res_altura.get(),
-            "ransac_n_iter": var_ransac_iter.get(),
-            "ransac_limiar_cm": var_ransac_limiar.get(),
-            "celulas_grade_x": var_grade_x.get(),
-            "celulas_grade_y": var_grade_y.get(),
-            "raio_pa_virtual_cm": var_raio_pa.get(),
-            "intensidade_pa_virtual_cm": var_intensidade_pa.get(),
-            "forcar_simulacao": var_forcar_sim.get(),
         }
 
     # Perfis salvos por versões antigas usavam METROS e outros nomes de
@@ -1118,9 +1230,6 @@ def _abrir_gui_configuracao() -> Optional[dict]:
         "profundidade_caixa": "profundidade_caixao_cm",
         "altura_kinect": "distancia_kinect_tampa_cm",
         "tolerancia_cor": "tolerancia_altura_cm",
-        "ransac_limiar_dist": "ransac_limiar_cm",
-        "raio_pa_virtual": "raio_pa_virtual_cm",
-        "intensidade_pa_virtual": "intensidade_pa_virtual_cm",
     }
 
     def _migrar_perfil_antigo(dados: dict) -> dict:
@@ -1183,15 +1292,6 @@ def _abrir_gui_configuracao() -> Optional[dict]:
         var_altura_caixa.set(str(dados.get("profundidade_caixao_cm", CONFIG_PADRAO["profundidade_caixao_cm"])))
         var_distancia_kinect.set(str(dados.get("distancia_kinect_tampa_cm", CONFIG_PADRAO["distancia_kinect_tampa_cm"])))
         var_tolerancia.set(str(dados.get("tolerancia_altura_cm", CONFIG_PADRAO["tolerancia_altura_cm"])))
-        var_res_largura.set(str(dados.get("resolucao_largura", CONFIG_PADRAO["resolucao_largura"])))
-        var_res_altura.set(str(dados.get("resolucao_altura", CONFIG_PADRAO["resolucao_altura"])))
-        var_ransac_iter.set(str(dados.get("ransac_n_iter", CONFIG_PADRAO["ransac_n_iter"])))
-        var_ransac_limiar.set(str(dados.get("ransac_limiar_cm", CONFIG_PADRAO["ransac_limiar_cm"])))
-        var_grade_x.set(str(dados.get("celulas_grade_x", CONFIG_PADRAO["celulas_grade_x"])))
-        var_grade_y.set(str(dados.get("celulas_grade_y", CONFIG_PADRAO["celulas_grade_y"])))
-        var_raio_pa.set(str(dados.get("raio_pa_virtual_cm", CONFIG_PADRAO["raio_pa_virtual_cm"])))
-        var_intensidade_pa.set(str(dados.get("intensidade_pa_virtual_cm", CONFIG_PADRAO["intensidade_pa_virtual_cm"])))
-        var_forcar_sim.set(bool(dados.get("forcar_simulacao", False)))
 
         ao_alternar_demo()
         _sincronizar_seg_modo_calibracao()
@@ -1244,7 +1344,6 @@ def _abrir_gui_configuracao() -> Optional[dict]:
     tab_mapa = tabview.add("Mapa Tático")
     tab_dim = tabview.add("Dimensões do Caixão")
     tab_calib = tabview.add("Calibração")
-    tab_avancado = tabview.add("Avançado")
 
     # ── Aba: Mapa Tático ──
     card_mapa = ctk.CTkFrame(tab_mapa, corner_radius=10)
@@ -1360,25 +1459,6 @@ def _abrir_gui_configuracao() -> Optional[dict]:
 
     _registrar_campo(card_calib, 3, 0, "Distância do Kinect até a Tampa de Calibração (cm)", var_distancia_kinect, "distancia_kinect_tampa_cm", "Distância Kinect → tampa")
     _registrar_campo(card_calib, 3, 1, "Tolerância de acerto da areia — pinta VERDE dentro de ± (cm)", var_tolerancia, "tolerancia_altura_cm", "Tolerância de acerto")
-    _registrar_campo(card_calib, 4, 0, "RANSAC — distância máxima de um ponto ao plano (cm)", var_ransac_limiar, "ransac_limiar_cm", "Limiar de inlier do RANSAC")
-    _registrar_campo(card_calib, 4, 1, "RANSAC — número de tentativas de detecção do plano", var_ransac_iter, "ransac_n_iter", "Iterações do RANSAC", inteiro=True)
-
-    # ── Aba: Avançado (scrollable, grade 2 colunas) ──
-    card_avancado = ctk.CTkScrollableFrame(tab_avancado, corner_radius=10, label_text="")
-    card_avancado.pack(fill="both", expand=True, padx=6, pady=6)
-    card_avancado.grid_columnconfigure((0, 1), weight=1)
-
-    _registrar_campo(card_avancado, 0, 0, "Resolução do Projetor — Largura (px)", var_res_largura, "resolucao_largura", "Resolução (largura)", inteiro=True)
-    _registrar_campo(card_avancado, 0, 1, "Resolução do Projetor — Altura (px)", var_res_altura, "resolucao_altura", "Resolução (altura)", inteiro=True)
-    _registrar_campo(card_avancado, 1, 0, "Malha de projeção — Colunas (eixo X)", var_grade_x, "celulas_grade_x", "Colunas da malha", inteiro=True)
-    _registrar_campo(card_avancado, 1, 1, "Malha de projeção — Linhas (eixo Y)", var_grade_y, "celulas_grade_y", "Linhas da malha", inteiro=True)
-    _registrar_campo(card_avancado, 2, 0, "Pá Virtual (simulação) — Raio de ação (cm)", var_raio_pa, "raio_pa_virtual_cm", "Raio da pá virtual")
-    _registrar_campo(card_avancado, 2, 1, "Pá Virtual (simulação) — Areia por clique (cm)", var_intensidade_pa, "intensidade_pa_virtual_cm", "Intensidade da pá virtual")
-
-    ctk.CTkSwitch(
-        card_avancado, text="Forçar Modo Simulação (ignorar Kinect conectado)",
-        variable=var_forcar_sim, font=ctk.CTkFont(size=12),
-    ).grid(row=3, column=0, columnspan=2, sticky="w", padx=8, pady=(10, 4))
 
     # ── Rodapé fixo: erro + botão INICIAR (linha 3, sempre visível) ──
     frame_rodape = ctk.CTkFrame(root, fg_color="transparent")
@@ -1405,15 +1485,6 @@ def _abrir_gui_configuracao() -> Optional[dict]:
         resultado["profundidade_caixa"] = float(var_altura_caixa.get()) / 100.0
         resultado["distancia_kinect_tampa"] = float(var_distancia_kinect.get()) / 100.0
         resultado["tolerancia_cor"] = float(var_tolerancia.get()) / 100.0
-        resultado["resolucao_largura"] = int(var_res_largura.get())
-        resultado["resolucao_altura"] = int(var_res_altura.get())
-        resultado["ransac_n_iter"] = int(var_ransac_iter.get())
-        resultado["ransac_limiar_dist"] = float(var_ransac_limiar.get()) / 100.0
-        resultado["celulas_grade_x"] = int(var_grade_x.get())
-        resultado["celulas_grade_y"] = int(var_grade_y.get())
-        resultado["raio_pa_virtual"] = float(var_raio_pa.get()) / 100.0
-        resultado["intensidade_pa_virtual"] = float(var_intensidade_pa.get()) / 100.0
-        resultado["forcar_simulacao"] = var_forcar_sim.get()
         root.destroy()
 
     btn_iniciar = ctk.CTkButton(
@@ -1466,9 +1537,7 @@ def main() -> None:
         sys.exit(0)
 
     global CAMINHO_GEOTIFF, LARGURA_MESA, COMPRIMENTO_MESA, PROFUNDIDADE_CAIXA
-    global DISTANCIA_KINECT_TAMPA, MODO_CALIBRACAO, TOLERANCIA_COR, RESOLUCAO_PROJETOR
-    global RANSAC_N_ITER, RANSAC_LIMIAR_DIST, CELULAS_GRADE_X, CELULAS_GRADE_Y
-    global RAIO_PA_VIRTUAL, INTENSIDADE_PA_VIRTUAL, FORCAR_SIMULACAO
+    global DISTANCIA_KINECT_TAMPA, MODO_CALIBRACAO, TOLERANCIA_COR
 
     CAMINHO_GEOTIFF = config["caminho_geotiff"]
     LARGURA_MESA = config["largura_mesa"]
@@ -1477,14 +1546,6 @@ def main() -> None:
     DISTANCIA_KINECT_TAMPA = config["distancia_kinect_tampa"]
     MODO_CALIBRACAO = config["modo_calibracao"]
     TOLERANCIA_COR = config["tolerancia_cor"]
-    RESOLUCAO_PROJETOR = (config["resolucao_largura"], config["resolucao_altura"])
-    RANSAC_N_ITER = config["ransac_n_iter"]
-    RANSAC_LIMIAR_DIST = config["ransac_limiar_dist"]
-    CELULAS_GRADE_X = config["celulas_grade_x"]
-    CELULAS_GRADE_Y = config["celulas_grade_y"]
-    RAIO_PA_VIRTUAL = config["raio_pa_virtual"]
-    INTENSIDADE_PA_VIRTUAL = config["intensidade_pa_virtual"]
-    FORCAR_SIMULACAO = config["forcar_simulacao"]
     TIPO_MAPA_INICIAL = config.get("tipo_mapa", TIPO_MAPA_CUBO)
 
     print()
@@ -1627,6 +1688,10 @@ def main() -> None:
             logger.info("Estado: CALIBRACAO (modo %s)", MODO_CALIBRACAO)
             try:
                 calibracao = _executar_calibracao(sensor, MODO_CALIBRACAO)
+                # Calibração do projetor (7 passos) com a superfície de
+                # referência ainda no lugar — o tabuleiro precisa ser
+                # projetado sobre um plano.
+                _executar_calibracao_projetor(sensor, calibracao)
                 if (MODO_CALIBRACAO == MODO_CALIBRACAO_TAMPA
                         and not sensor.esta_simulando):
                     # A tampa ainda está sobre o caixão — sem removê-la o

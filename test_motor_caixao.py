@@ -34,6 +34,15 @@ from motor_caixao_areia import (
     transformar_pontos,
     encontrar_cantos_tabuleiro,
     projetar_pontos_tsai,
+    calibrar_projetor,
+    verificar_rotacao_projetor,
+    montar_matriz_projecao,
+    project_3d_to_projector,
+    gerar_imagem_tabuleiro,
+    cantos_rgb_para_pontos_mesa,
+    pipeline_calibracao_projetor,
+    salvar_calibracao_projetor,
+    carregar_calibracao_projetor,
     cor_por_diferenca,
     cor_por_diferenca_vetorizado,
     gerar_mapa_cores,
@@ -559,6 +568,393 @@ class TestProjecaoTsai(unittest.TestCase):
         pixels = projetar_pontos_tsai(pontos_3d, rvec, tvec, camera_matrix)
         self.assertEqual(pixels.shape, (3, 2),
                          "Resultado deve ter shape (N, 2)")
+
+
+# =====================================================================
+# 4b. TESTES — Calibração do Projetor via OpenCV (teste sintético)
+# =====================================================================
+
+class TestCalibracaoProjetorOpenCV(unittest.TestCase):
+    """Valida a calibração inverse-pinhole com um projetor sintético.
+
+    Cenário: projetor virtual 1280×720 com fx = fy = 1400 px, montado
+    ~2 m acima da mesa apontando para baixo.  Um grid regular de pontos
+    com Z = 0 (referencial de Gram-Schmidt) é projetado com
+    ``cv2.projectPoints`` para gerar as correspondências 2D "medidas".
+
+    Dois conjuntos de dados, porque o condicionamento depende do tilt:
+
+    - **quase-nadir (5°)**: a vista é quase fronto-paralela e ``f`` fica
+      acoplado a ``tz`` (só ``f/tz`` é observável) — usado para validar
+      o caminho ``fixar_intrinsecos=True`` (solvePnP com K conhecido),
+      o sanity check da rotação e a matriz P;
+    - **oblíquo (25°)**: vista bem condicionada — usado para validar a
+      recuperação dos intrínsecos pelo ``cv2.calibrateCamera``.
+    """
+
+    RESOLUCAO = (1280, 720)
+    FOCAL_REAL = 1400.0
+
+    @classmethod
+    def setUpClass(cls):
+        import cv2
+
+        largura, altura = cls.RESOLUCAO
+        cls.K_real = np.array([
+            [cls.FOCAL_REAL, 0.0,            largura / 2.0],
+            [0.0,            cls.FOCAL_REAL, altura / 2.0],
+            [0.0,            0.0,            1.0],
+        ])
+
+        # Pose real: projetor em (0.75, 0.75, 2.0) olhando para baixo.
+        # Base nadir: x_cam = +X, y_cam = -Y, z_cam = -Z (det = +1),
+        # composta com um tilt em torno de x_cam.
+        R_nadir = np.array([
+            [1.0,  0.0,  0.0],
+            [0.0, -1.0,  0.0],
+            [0.0,  0.0, -1.0],
+        ])
+        centro_projetor = np.array([0.75, 0.75, 2.0])
+
+        # Grid 6×6 de pontos 3D no plano da mesa (Z = 0), 1.5 m × 1.5 m
+        xs, ys = np.meshgrid(np.linspace(0.0, 1.5, 6), np.linspace(0.0, 1.5, 6))
+        cls.pontos_3d = np.column_stack([
+            xs.ravel(), ys.ravel(), np.zeros(xs.size),
+        ])
+
+        # Tilt em torno de x encurta a imagem só em v (condiciona fy);
+        # tilt em torno de y encurta só em u (condiciona fx) — a vista
+        # oblíqua precisa dos dois para tornar fx E fy observáveis.
+        def _gerar_vista(tilt_x_graus: float, tilt_y_graus: float):
+            R_tilt, _ = cv2.Rodrigues(np.deg2rad(
+                np.array([tilt_x_graus, tilt_y_graus, 0.0])
+            ))
+            R = R_tilt @ R_nadir
+            t = -R @ centro_projetor
+            rvec, _ = cv2.Rodrigues(R)
+            pixels, _ = cv2.projectPoints(
+                cls.pontos_3d.reshape(-1, 1, 3),
+                rvec, t.reshape(3, 1), cls.K_real, np.zeros(5),
+            )
+            return R, t, pixels.reshape(-1, 2)
+
+        cls.R_real, cls.t_real, cls.pontos_2d = _gerar_vista(5.0, 0.0)
+        cls.R_obliqua, cls.t_obliqua, cls.pontos_2d_obliqua = _gerar_vista(20.0, 15.0)
+
+    def test_calibracao_recupera_intrinsecos_e_pose(self):
+        """calibrateCamera (vista oblíqua 25°) deve recuperar fx, fy e a pose."""
+        K, dist, rvec, tvec, erro_rms = calibrar_projetor(
+            self.pontos_3d, self.pontos_2d_obliqua, self.RESOLUCAO,
+        )
+
+        self.assertLess(erro_rms, 0.5,
+                        f"Erro RMS de reprojeção alto: {erro_rms:.3f} px")
+        self.assertAlmostEqual(K[0, 0], self.FOCAL_REAL, delta=self.FOCAL_REAL * 0.02,
+                               msg=f"fx recuperado {K[0, 0]:.1f} difere do real")
+        self.assertAlmostEqual(K[1, 1], self.FOCAL_REAL, delta=self.FOCAL_REAL * 0.02,
+                               msg=f"fy recuperado {K[1, 1]:.1f} difere do real")
+        # Distorção fixada em zero pelas flags
+        self.assertTrue(np.allclose(dist, 0.0),
+                        "Coeficientes de distorção deveriam permanecer zero")
+
+        import cv2
+        R, _ = cv2.Rodrigues(rvec)
+        self.assertTrue(np.allclose(R, self.R_obliqua, atol=1e-2),
+                        "Rotação recuperada difere da rotação real")
+        self.assertTrue(np.allclose(tvec.ravel(), self.t_obliqua, atol=5e-2),
+                        "Translação recuperada difere da real")
+
+    def test_fixar_intrinsecos_usa_solvepnp(self):
+        """Com K conhecido (fixar_intrinsecos=True), só a pose é estimada."""
+        largura, altura = self.RESOLUCAO
+        K, _, rvec, tvec, erro_rms = calibrar_projetor(
+            self.pontos_3d, self.pontos_2d, self.RESOLUCAO,
+            focal_inicial_px=self.FOCAL_REAL,
+            ponto_principal=(largura / 2.0, altura / 2.0),
+            fixar_intrinsecos=True,
+        )
+        self.assertTrue(np.allclose(K, self.K_real),
+                        "K deveria ser exatamente o chute fornecido")
+        self.assertLess(erro_rms, 0.1,
+                        f"Erro RMS de reprojeção alto: {erro_rms:.3f} px")
+        self.assertTrue(np.allclose(tvec.ravel(), self.t_real, atol=1e-3),
+                        "Translação recuperada difere da real")
+
+    def test_sanity_check_rotacao_aponta_para_baixo(self):
+        """Eixo óptico recuperado deve apontar ≈ (0, 0, -1) e tz > 0."""
+        _, _, rvec, tvec, _ = calibrar_projetor(
+            self.pontos_3d, self.pontos_2d, self.RESOLUCAO,
+        )
+        self.assertTrue(
+            verificar_rotacao_projetor(rvec, tvec, tolerancia_graus=15.0,
+                                       verboso=False),
+            "Sanity check falhou: projetor deveria apontar para (0, 0, -1)",
+        )
+        # Tolerância apertada rejeita: o tilt real é 5°, então 1° falha
+        self.assertFalse(
+            verificar_rotacao_projetor(rvec, tvec, tolerancia_graus=1.0,
+                                       verboso=False),
+            "Tolerância de 1° deveria rejeitar um tilt de 5°",
+        )
+
+    def test_matriz_projecao_equivale_a_projectpoints(self):
+        """P = K·[R|T] deve reproduzir cv2.projectPoints (distorção zero)."""
+        K, _, rvec, tvec, _ = calibrar_projetor(
+            self.pontos_3d, self.pontos_2d, self.RESOLUCAO,
+        )
+        P = montar_matriz_projecao(K, rvec, tvec)
+        self.assertEqual(P.shape, (3, 4))
+
+        uv_P = project_3d_to_projector(self.pontos_3d, P)
+        uv_cv = projetar_pontos_tsai(self.pontos_3d, rvec, tvec, K)
+        self.assertTrue(np.allclose(uv_P, uv_cv, atol=1e-6),
+                        "P·[X,Y,Z,1] difere de cv2.projectPoints")
+        # E ambos devem bater com os pixels sintéticos "medidos"
+        self.assertTrue(np.allclose(uv_P, self.pontos_2d, atol=0.5),
+                        "Reprojeção difere dos pixels do grid original")
+
+    def test_project_3d_ponto_unico_e_fora_do_plano(self):
+        """Ponto único (3,) → pixel (2,); Z ≠ 0 também projeta (areia)."""
+        K, _, rvec, tvec, _ = calibrar_projetor(
+            self.pontos_3d, self.pontos_2d, self.RESOLUCAO,
+        )
+        P = montar_matriz_projecao(K, rvec, tvec)
+
+        ponto_areia = np.array([0.75, 0.75, 0.10])   # monte de 10 cm
+        uv = project_3d_to_projector(ponto_areia, P)
+        self.assertEqual(uv.shape, (2,), "Ponto único deve retornar shape (2,)")
+
+        uv_ref = projetar_pontos_tsai(
+            ponto_areia.reshape(1, 3), rvec, tvec, K,
+        )[0]
+        self.assertTrue(np.allclose(uv, uv_ref, atol=1e-6),
+                        "Projeção de ponto fora do plano difere do OpenCV")
+
+    def test_poucas_correspondencias_levanta_valueerror(self):
+        """Menos de 6 correspondências deve falhar cedo e com mensagem clara."""
+        with self.assertRaises(ValueError):
+            calibrar_projetor(
+                self.pontos_3d[:4], self.pontos_2d[:4], self.RESOLUCAO,
+            )
+
+
+# =====================================================================
+# 4c. TESTES — Pipeline de 7 passos da calibração do projetor
+# =====================================================================
+
+class TestGeracaoTabuleiro(unittest.TestCase):
+    """Passo 1 — o tabuleiro gerado deve ser detectável pelo OpenCV e os
+    cantos detectados devem coincidir com as coordenadas analíticas."""
+
+    def test_cantos_analiticos_batem_com_deteccao(self):
+        imagem, cantos_gerados = gerar_imagem_tabuleiro((640, 480), (7, 5))
+        self.assertEqual(imagem.shape, (480, 640, 3))
+        self.assertEqual(cantos_gerados.shape, (35, 2))
+
+        encontrado, cantos_detectados = encontrar_cantos_tabuleiro(
+            imagem, (7, 5), refinar=True,
+        )
+        self.assertTrue(encontrado, "Tabuleiro gerado não foi detectado")
+        cantos_detectados = cantos_detectados.reshape(-1, 2)
+        # Alinha a ordem (o detector pode devolver girado em 180°)
+        if cantos_detectados[0, 1] > cantos_detectados[-1, 1]:
+            cantos_detectados = cantos_detectados[::-1]
+        self.assertTrue(
+            np.allclose(cantos_detectados, cantos_gerados, atol=1.0),
+            "Cantos detectados divergem dos analíticos em > 1 px",
+        )
+
+    def test_resolucao_pequena_levanta_valueerror(self):
+        with self.assertRaises(ValueError):
+            gerar_imagem_tabuleiro((60, 40), (7, 5))
+
+
+class TestCantosParaPontosMesa(unittest.TestCase):
+    """Passo 4 — cantos 2D + profundidade → 3D no referencial da mesa."""
+
+    def test_backprojection_com_profundidade_constante(self):
+        # Plano perpendicular ao eixo óptico a 2 m; T_final desloca a
+        # nuvem [X, Y, -2] para Z_mesa = 0.15 (tampa 15 cm acima da base)
+        intr = {"fx": 525.0, "fy": 525.0, "cx": 319.5, "cy": 239.5}
+        profundidade = np.full((480, 640), 2000, dtype=np.uint16)
+        T = np.eye(4)
+        T[2, 3] = 2.15
+
+        cantos = np.array([[319.5, 239.5], [424.5, 239.5]])
+        pontos = cantos_rgb_para_pontos_mesa(cantos, profundidade, intr, T)
+
+        # Centro óptico → X = Y = 0; segundo canto: X = 105·2/525 = 0.4
+        self.assertTrue(np.allclose(pontos[0], [0.0, 0.0, 0.15], atol=1e-6))
+        self.assertTrue(np.allclose(pontos[1], [0.4, 0.0, 0.15], atol=1e-6))
+
+    def test_profundidade_zero_levanta_runtimeerror(self):
+        intr = {"fx": 525.0, "fy": 525.0, "cx": 319.5, "cy": 239.5}
+        profundidade = np.zeros((480, 640), dtype=np.uint16)
+        with self.assertRaises(RuntimeError):
+            cantos_rgb_para_pontos_mesa(
+                np.array([[320.0, 240.0]]), profundidade, intr, np.eye(4),
+            )
+
+
+class TestPipelineCalibracaoProjetor(unittest.TestCase):
+    """Passos 3–7 de ponta a ponta com um projetor físico sintético.
+
+    Geometria física (referencial da câmera do Kinect, Z para FRENTE,
+    em direção à mesa):
+
+    - Superfície plana perpendicular ao eixo óptico a 2.0 m.
+    - Projetor 1280×720 (f = 1400 px) 20 cm acima da câmera, deslocado
+      lateralmente e levemente inclinado.
+    - A imagem "capturada" pela câmera é o tabuleiro do projetor
+      deformado pela homografia física real (projetor → plano → câmera)
+      — a detecção de cantos roda numa imagem de verdade.
+
+    O referencial da mesa segue a convenção do sistema (nuvem
+    ``[X, Y, -Z]`` + deslocamento em Z), que é uma imagem espelhada do
+    mundo físico — o pipeline deve retificá-la internamente (a pose
+    própria recuperada passa no sanity check) e a matriz P deve mapear
+    corretamente inclusive pontos FORA do plano (paralaxe da areia).
+    """
+
+    RESOLUCAO_PROJ = (1280, 720)
+    INTR_CAM = {"fx": 525.0, "fy": 525.0, "cx": 319.5, "cy": 239.5}
+    Z_PLANO_FISICO = 2.0          # m (profundidade real da superfície)
+    OFFSET_Z_MESA = 2.15          # T_final: Z_mesa = 2.15 - Z_real
+
+    @classmethod
+    def setUpClass(cls):
+        import cv2
+
+        # ── Projetor físico (ground truth) ──
+        cls.K_proj = np.array([
+            [1400.0, 0.0,    640.0],
+            [0.0,    1400.0, 360.0],
+            [0.0,    0.0,    1.0],
+        ])
+        cls.R_proj, _ = cv2.Rodrigues(np.array([0.10, -0.08, 0.0]))
+        centro_proj = np.array([0.25, 0.15, -0.20])   # 20 cm acima da câmera
+        cls.t_proj = -cls.R_proj @ centro_proj
+
+        # ── Passo 1: tabuleiro com cantos conhecidos ──
+        cls.imagem_tab, cls.cantos_proj = gerar_imagem_tabuleiro(
+            cls.RESOLUCAO_PROJ, (7, 5),
+        )
+
+        # ── Física: pixel do projetor → ponto no plano → pixel da câmera ──
+        K_inv = np.linalg.inv(cls.K_proj)
+        raios = (np.column_stack([cls.cantos_proj,
+                                  np.ones(len(cls.cantos_proj))]) @ K_inv.T)
+        raios_mundo = raios @ cls.R_proj                # R.T aplicado por linha
+        t_escala = (cls.Z_PLANO_FISICO - centro_proj[2]) / raios_mundo[:, 2]
+        cls.pontos_fisicos = centro_proj + raios_mundo * t_escala[:, None]
+
+        fx, fy = cls.INTR_CAM["fx"], cls.INTR_CAM["fy"]
+        cx, cy = cls.INTR_CAM["cx"], cls.INTR_CAM["cy"]
+        cls.cantos_cam_teoricos = np.column_stack([
+            fx * cls.pontos_fisicos[:, 0] / cls.pontos_fisicos[:, 2] + cx,
+            fy * cls.pontos_fisicos[:, 1] / cls.pontos_fisicos[:, 2] + cy,
+        ])
+
+        # ── Passo 2 sintético: imagem da câmera = tabuleiro deformado
+        #    pela homografia física (warp real, detecção real) ──
+        H, _ = cv2.findHomography(
+            cls.cantos_proj.astype(np.float32),
+            cls.cantos_cam_teoricos.astype(np.float32),
+        )
+        cls.imagem_cam = cv2.warpPerspective(
+            cls.imagem_tab, H, (640, 480),
+            borderMode=cv2.BORDER_CONSTANT, borderValue=(255, 255, 255),
+        )
+        cls.profundidade = np.full((480, 640), 2000, dtype=np.uint16)
+
+        cls.T_final = np.eye(4)
+        cls.T_final[2, 3] = cls.OFFSET_Z_MESA
+
+        cls.cal = pipeline_calibracao_projetor(
+            cls.imagem_cam,
+            cls.profundidade,
+            cls.INTR_CAM,
+            cls.T_final,
+            cls.cantos_proj,
+            (7, 5),
+            cls.RESOLUCAO_PROJ,
+            focal_inicial_px=1400.0,
+            ponto_principal=(640.0, 360.0),
+            fixar_intrinsecos=True,   # montagem quase-nadir: K conhecido
+            verboso=False,
+        )
+
+    def _pixel_fisico(self, ponto_fisico: np.ndarray) -> np.ndarray:
+        """Projeção ground-truth de um ponto físico no projetor real."""
+        p = self.R_proj @ ponto_fisico + self.t_proj
+        return np.array([
+            self.K_proj[0, 0] * p[0] / p[2] + self.K_proj[0, 2],
+            self.K_proj[1, 1] * p[1] / p[2] + self.K_proj[1, 2],
+        ])
+
+    def test_sanidade_e_erro_de_reprojecao(self):
+        """A pose recuperada deve ser própria (eixo óptico ≈ (0,0,-1))."""
+        self.assertTrue(self.cal.sanidade_ok,
+                        "Sanity check do eixo Z falhou no pipeline")
+        self.assertLess(self.cal.erro_rms_px, 1.5,
+                        f"Erro RMS alto: {self.cal.erro_rms_px:.2f} px")
+        eixo = self.cal.R[2, :]
+        self.assertLess(np.degrees(np.arccos(np.clip(-eixo[2], -1, 1))), 15.0,
+                        f"Eixo óptico fora do esperado: {eixo}")
+
+    def test_p_reprojeta_cantos_no_plano(self):
+        """P·w nos pontos 3D medidos deve devolver o grid do projetor."""
+        uv = project_3d_to_projector(self.cal.pontos_3d_mesa, self.cal.P)
+        self.assertTrue(
+            np.allclose(uv, self.cantos_proj, atol=1.5),
+            "P não reprojeta os cantos 3D nos pixels originais do grid",
+        )
+
+    def test_paralaxe_fora_do_plano(self):
+        """O teste decisivo: um 'monte de areia' 10 cm ACIMA do plano.
+
+        A pose-espelho (sem a retificação de quiralidade) reprojeta os
+        pontos do plano perfeitamente, mas inverte o deslocamento de
+        paralaxe de pontos fora dele — este assert falharia com o dobro
+        do deslocamento de paralaxe como erro.
+        """
+        # Ponto físico 10 cm acima da superfície (mais perto do sensor)
+        ponto_fisico = np.array([0.10, 0.05, self.Z_PLANO_FISICO - 0.10])
+        pixel_verdadeiro = self._pixel_fisico(ponto_fisico)
+
+        # Mesmo ponto no referencial da mesa: (X, Y, 2.15 - Z_real)
+        ponto_mesa = np.array([
+            ponto_fisico[0], ponto_fisico[1],
+            self.OFFSET_Z_MESA - ponto_fisico[2],
+        ])
+        pixel_estimado = project_3d_to_projector(ponto_mesa, self.cal.P)
+
+        erro = float(np.linalg.norm(pixel_estimado - pixel_verdadeiro))
+        self.assertLess(
+            erro, 4.0,
+            f"Paralaxe fora do plano errada: desvio de {erro:.1f} px "
+            f"(estimado {pixel_estimado}, verdadeiro {pixel_verdadeiro})",
+        )
+
+    def test_persistencia_round_trip(self):
+        """salvar/carregar preserva K, extrínsecos e a matriz P."""
+        with tempfile.TemporaryDirectory() as tmp:
+            caminho = Path(tmp) / "calibration_data.json"
+            salvar_calibracao_projetor(self.cal, caminho)
+            cal2 = carregar_calibracao_projetor(caminho)
+
+        self.assertIsNotNone(cal2)
+        self.assertTrue(np.allclose(cal2.camera_matrix, self.cal.camera_matrix))
+        self.assertTrue(np.allclose(cal2.rvec, self.cal.rvec))
+        self.assertTrue(np.allclose(cal2.tvec, self.cal.tvec))
+        self.assertTrue(np.allclose(cal2.P, self.cal.P))
+        self.assertEqual(cal2.sanidade_ok, self.cal.sanidade_ok)
+
+    def test_arquivo_sem_bloco_projetor_retorna_none(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            caminho = Path(tmp) / "calibration_data.json"
+            caminho.write_text(json.dumps({"versao": 2}), encoding="utf-8")
+            self.assertIsNone(carregar_calibracao_projetor(caminho))
 
 
 # =====================================================================

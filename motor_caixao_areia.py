@@ -12,8 +12,10 @@ Pipeline Matemático
    (``construir_base_mesa``, ``montar_matriz_transformacao``).
 3. **Detecção de grid** — ``cv2.findChessboardCorners``
    (``encontrar_cantos_tabuleiro``).
-4. **Projeção 3D → 2D** — Modelo de Tsai via ``cv2.projectPoints``
-   (``projetar_pontos_tsai``, ``calibrar_projetor``).
+4. **Calibração do projetor (inverse pinhole)** — Modelo de Tsai via
+   funções nativas do OpenCV (``calibrar_projetor``,
+   ``verificar_rotacao_projetor``, ``montar_matriz_projecao``,
+   ``project_3d_to_projector``, ``projetar_pontos_tsai``).
 5. **Nuvem RGBD** — Conversão Open3D (``criar_nuvem_de_pontos_open3d``).
 6. **Coloração MDE** — Comparação Z_real vs Z_alvo com tolerância
    (``gerar_mapa_cores``).
@@ -22,6 +24,7 @@ Pipeline Matemático
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
@@ -565,8 +568,13 @@ def encontrar_cantos_tabuleiro(
 
 
 # ============================================================================
-# 4. ALGORITMO DE TSAI — Projeção 3D → 2D via cv2.projectPoints
+# 4. CALIBRAÇÃO DO PROJETOR — Modelo de Tsai (inverse pinhole) via OpenCV
 # ============================================================================
+# O projetor é tratado como uma câmera "invertida": as correspondências
+# 3D↔2D vêm de pontos com Z=0 no referencial de Gram-Schmidt (mesa) e dos
+# pixels do grid regular gerado pelo próprio projetor.  Toda a estimação
+# usa exclusivamente funções nativas do OpenCV (cv2.calibrateCamera /
+# cv2.solvePnP / cv2.solvePnPRefineLM) — sem implementação manual de Tsai.
 
 def projetar_pontos_tsai(
     pontos_3d: np.ndarray,
@@ -616,29 +624,743 @@ def calibrar_projetor(
     pontos_3d_mesa: np.ndarray,
     pontos_2d_projetor: np.ndarray,
     tamanho_imagem: Tuple[int, int],
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Calibra o projetor usando correspondências 3D↔2D (cv2.calibrateCamera).
+    focal_inicial_px: Optional[float] = None,
+    ponto_principal: Optional[Tuple[float, float]] = None,
+    fixar_intrinsecos: bool = False,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, float]:
+    """Calibra o projetor (inverse pinhole) com funções nativas do OpenCV.
+
+    Estima os intrínsecos ``K`` e os extrínsecos ``(rvec, tvec)`` do
+    projetor em relação ao **referencial de Gram-Schmidt da mesa**, a
+    partir de uma única vista de pontos **coplanares** (Z ≈ 0).
+
+    Condicionamento de vista única coplanar
+    ---------------------------------------
+    Uma homografia plano→imagem tem 8 graus de liberdade; a pose consome
+    6, sobrando apenas ~2 para intrínsecos.  Por isso a estimação é
+    restrita a ``fx, fy`` (ponto principal fixado no chute inicial,
+    distorção fixada em zero) via as flags ``CALIB_USE_INTRINSIC_GUESS``,
+    ``CALIB_FIX_PRINCIPAL_POINT``, ``CALIB_ZERO_TANGENT_DIST`` e
+    ``CALIB_FIX_K1..K3`` — chamar ``cv2.calibrateCamera`` sem essas
+    flags nesse cenário produz K e distorção sem significado físico.
+
+    **Atenção (montagem nadir/vertical):** com o projetor perfeitamente
+    perpendicular ao plano, a vista é fronto-paralela e ``f`` fica
+    acoplado à distância ``tz`` (só a razão ``f/tz`` é observável).
+    Nesse caso, informe a focal real do projetor (razão de projeção ×
+    largura em pixels) em ``focal_inicial_px`` e use
+    ``fixar_intrinsecos=True`` para resolver a pose via ``cv2.solvePnP``
+    com K conhecido — o caminho mais estável.
 
     Parameters
     ----------
     pontos_3d_mesa : np.ndarray, shape (N, 3)
-        Pontos 3D no referencial da mesa.
+        Pontos 3D no referencial de Gram-Schmidt (Z ≈ 0), N ≥ 6.
     pontos_2d_projetor : np.ndarray, shape (N, 2)
-        Pixels correspondentes na imagem do projetor.
+        Pixels (u, v) correspondentes do grid original do projetor.
     tamanho_imagem : (largura, altura)
-        Resolução do projetor.
+        Resolução nativa do projetor em pixels.
+    focal_inicial_px : float | None
+        Chute inicial para fx = fy, em pixels.  Padrão: ``1.2 × largura``
+        (razão de projeção típica ~1.2).
+    ponto_principal : (cx, cy) | None
+        Ponto principal, mantido fixo.  Padrão: centro da imagem.
+        Projetores com *lens shift* vertical costumam ter ``cy`` perto
+        da borda da imagem — informe se conhecido.
+    fixar_intrinsecos : bool
+        Se ``True``, não estima K: usa o chute como K definitivo e
+        resolve apenas a pose com ``cv2.solvePnP`` (recomendado para
+        montagem nadir).
 
     Returns
     -------
-    camera_matrix, dist_coeffs, rvec, tvec
-    """
-    obj_pts = [pontos_3d_mesa.astype(np.float32)]
-    img_pts = [pontos_2d_projetor.reshape(-1, 1, 2).astype(np.float32)]
+    camera_matrix : np.ndarray, shape (3, 3)
+    dist_coeffs : np.ndarray, shape (5, 1) — sempre zeros (fixada).
+    rvec, tvec : np.ndarray, shape (3, 1)
+        Pose refinada por ``cv2.solvePnPRefineLM``.
+    erro_rms_px : float
+        Erro RMS de reprojeção em pixels (qualidade da calibração;
+        valores > ~2 px indicam correspondências ruins ou K errado).
 
-    ret, camera_matrix, dist_coeffs, rvecs, tvecs = cv2.calibrateCamera(
-        obj_pts, img_pts, tamanho_imagem, None, None
+    Raises
+    ------
+    ValueError
+        Se houver menos de 6 correspondências ou shapes incompatíveis.
+    RuntimeError
+        Se o ``cv2.solvePnP`` não convergir.
+    """
+    obj = np.ascontiguousarray(pontos_3d_mesa, dtype=np.float32).reshape(-1, 3)
+    img = np.ascontiguousarray(pontos_2d_projetor, dtype=np.float32).reshape(-1, 2)
+
+    if obj.shape[0] != img.shape[0]:
+        raise ValueError(
+            f"Número de pontos 3D ({obj.shape[0]}) difere do de pixels "
+            f"2D ({img.shape[0]})."
+        )
+    if obj.shape[0] < 6:
+        raise ValueError(
+            f"São necessárias pelo menos 6 correspondências 3D↔2D "
+            f"(recebidas {obj.shape[0]})."
+        )
+
+    largura, altura = tamanho_imagem
+    if focal_inicial_px is None:
+        focal_inicial_px = 1.2 * largura
+    if ponto_principal is None:
+        ponto_principal = (largura / 2.0, altura / 2.0)
+
+    K0 = np.array([
+        [focal_inicial_px, 0.0,              ponto_principal[0]],
+        [0.0,              focal_inicial_px, ponto_principal[1]],
+        [0.0,              0.0,              1.0],
+    ], dtype=np.float64)
+    dist_coeffs = np.zeros((5, 1), dtype=np.float64)
+
+    if fixar_intrinsecos:
+        camera_matrix = K0
+        ok, rvec, tvec = cv2.solvePnP(
+            obj, img, camera_matrix, dist_coeffs,
+            flags=cv2.SOLVEPNP_ITERATIVE,
+        )
+        if not ok:
+            raise RuntimeError("cv2.solvePnP não convergiu para a pose do projetor.")
+    else:
+        flags = (
+            cv2.CALIB_USE_INTRINSIC_GUESS
+            | cv2.CALIB_FIX_PRINCIPAL_POINT
+            | cv2.CALIB_ZERO_TANGENT_DIST
+            | cv2.CALIB_FIX_K1
+            | cv2.CALIB_FIX_K2
+            | cv2.CALIB_FIX_K3
+        )
+        _, camera_matrix, dist_coeffs, rvecs, tvecs = cv2.calibrateCamera(
+            [obj], [img.reshape(-1, 1, 2)], (int(largura), int(altura)),
+            K0, dist_coeffs, flags=flags,
+        )
+        rvec, tvec = rvecs[0], tvecs[0]
+
+    # Refinamento final da pose por Levenberg-Marquardt (K congelado)
+    rvec, tvec = cv2.solvePnPRefineLM(
+        obj, img, camera_matrix, dist_coeffs,
+        np.asarray(rvec, dtype=np.float64).reshape(3, 1),
+        np.asarray(tvec, dtype=np.float64).reshape(3, 1),
     )
-    return camera_matrix, dist_coeffs, rvecs[0], tvecs[0]
+
+    reproj = projetar_pontos_tsai(obj, rvec, tvec, camera_matrix, dist_coeffs)
+    erro_rms_px = float(np.sqrt(np.mean(np.sum((reproj - img) ** 2, axis=1))))
+
+    return camera_matrix, dist_coeffs, rvec, tvec, erro_rms_px
+
+
+def verificar_rotacao_projetor(
+    rvec: np.ndarray,
+    tvec: np.ndarray,
+    tolerancia_graus: float = 15.0,
+    verboso: bool = True,
+) -> bool:
+    """Sanity check dos extrínsecos: o projetor aponta para baixo?
+
+    Na convenção do OpenCV, ``X_cam = R · X_mundo + t``.  O eixo óptico
+    do projetor é ``(0, 0, 1)`` no referencial dele; expresso no
+    referencial da mesa vale ``R.T @ (0,0,1)``, ou seja, a **3ª linha
+    de R**.  Como o projetor está montado na vertical olhando para o
+    plano Z = 0 (cujo Z aponta para cima), essa direção deve ser
+    aproximadamente ``(0, 0, -1)``.  Também é exigido ``tz > 0``: a
+    mesa precisa estar à frente do projetor.
+
+    Parameters
+    ----------
+    rvec, tvec : np.ndarray
+        Extrínsecos retornados por :func:`calibrar_projetor`.
+    tolerancia_graus : float
+        Desvio angular máximo aceito entre o eixo óptico e (0, 0, -1).
+    verboso : bool
+        Se ``True``, imprime R, T e o diagnóstico.
+
+    Returns
+    -------
+    bool
+        ``True`` se a orientação e a translação são fisicamente
+        plausíveis para a montagem vertical.
+    """
+    R, _ = cv2.Rodrigues(np.asarray(rvec, dtype=np.float64).reshape(3, 1))
+    t = np.asarray(tvec, dtype=np.float64).reshape(3)
+
+    eixo_optico_mundo = R[2, :]                     # R.T @ [0,0,1]
+    alvo = np.array([0.0, 0.0, -1.0])
+    cos_ang = float(np.clip(np.dot(eixo_optico_mundo, alvo), -1.0, 1.0))
+    angulo_graus = float(np.degrees(np.arccos(cos_ang)))
+
+    orientacao_ok = angulo_graus <= tolerancia_graus
+    translacao_ok = t[2] > 0.0
+    ok = orientacao_ok and translacao_ok
+
+    if verboso:
+        with np.printoptions(precision=4, suppress=True):
+            print("[Sanity Check Projetor] Matriz de rotação R (mesa → projetor):")
+            print(R)
+            print(f"[Sanity Check Projetor] Vetor de translação T: {t}")
+            print(f"[Sanity Check Projetor] Eixo óptico no referencial da "
+                  f"mesa (3ª linha de R): {eixo_optico_mundo}")
+        print(f"[Sanity Check Projetor] Desvio em relação a (0, 0, -1): "
+              f"{angulo_graus:.2f}° (tolerância {tolerancia_graus:.1f}°) "
+              f"→ {'OK' if orientacao_ok else 'FALHOU'}")
+        print(f"[Sanity Check Projetor] tz = {t[2]:.4f} m (> 0 esperado) "
+              f"→ {'OK' if translacao_ok else 'FALHOU'}")
+    return ok
+
+
+def montar_matriz_projecao(
+    camera_matrix: np.ndarray,
+    rvec: np.ndarray,
+    tvec: np.ndarray,
+) -> np.ndarray:
+    """Monta a matriz de projeção 3×4 do projetor: ``P = K · [R | T]``.
+
+    Válida porque a distorção do projetor é fixada em zero na
+    calibração (:func:`calibrar_projetor`) — com distorção não nula a
+    projeção deixaria de ser linear e ``P`` não seria suficiente.
+
+    Parameters
+    ----------
+    camera_matrix : np.ndarray, shape (3, 3)
+    rvec, tvec : np.ndarray
+        Extrínsecos (rvec em forma de Rodrigues).
+
+    Returns
+    -------
+    np.ndarray, shape (3, 4)
+    """
+    R, _ = cv2.Rodrigues(np.asarray(rvec, dtype=np.float64).reshape(3, 1))
+    t = np.asarray(tvec, dtype=np.float64).reshape(3, 1)
+    return np.asarray(camera_matrix, dtype=np.float64) @ np.hstack([R, t])
+
+
+def project_3d_to_projector(
+    point_3d: np.ndarray,
+    P: np.ndarray,
+) -> np.ndarray:
+    """Projeta coordenadas 3D da mesa nos pixels (u, v) do projetor.
+
+    Aplica ``[u', v', w].T = P · [X, Y, Z, 1].T`` e desomogeneíza:
+    ``u = u'/w``, ``v = v'/w``.  Aceita um ponto único ou um lote.
+
+    Parameters
+    ----------
+    point_3d : np.ndarray, shape (3,) ou (N, 3)
+        Ponto(s) no referencial de Gram-Schmidt da mesa (metros).
+    P : np.ndarray, shape (3, 4)
+        Matriz de projeção de :func:`montar_matriz_projecao`.
+
+    Returns
+    -------
+    np.ndarray, shape (2,) ou (N, 2)
+        Pixel(s) (u, v) — float; arredonde/clipe no chamador antes de
+        pintar, pois pontos fora do frustum caem fora da resolução.
+
+    Raises
+    ------
+    ValueError
+        Se algum ponto estiver no plano principal do projetor (w ≈ 0),
+        onde a projeção não é definida.
+    """
+    pontos = np.asarray(point_3d, dtype=np.float64)
+    ponto_unico = pontos.ndim == 1
+    pontos = np.atleast_2d(pontos)                       # (N, 3)
+
+    homogeneos = np.hstack([pontos, np.ones((pontos.shape[0], 1))])  # (N, 4)
+    uvw = homogeneos @ np.asarray(P, dtype=np.float64).T             # (N, 3)
+
+    w = uvw[:, 2]
+    if np.any(np.abs(w) < 1e-9):
+        raise ValueError(
+            "Ponto no plano principal do projetor (w ≈ 0): projeção indefinida."
+        )
+    uv = uvw[:, :2] / w[:, np.newaxis]
+    return uv[0] if ponto_unico else uv
+
+
+# ============================================================================
+# 4b. PIPELINE COMPLETO DE CALIBRAÇÃO DO PROJETOR (7 passos do orientador)
+# ============================================================================
+# Passo 1 — gerar_imagem_tabuleiro: grid com vértices em pixels conhecidos.
+# Passo 2 — captura RGB: hardware (KinectSensor.capturar_rgb, em main.py).
+# Passo 3 — encontrar_cantos_tabuleiro: cv2.findChessboardCorners.
+# Passo 4 — cantos_rgb_para_pontos_mesa: profundidade → 3D → Gram-Schmidt.
+# Passo 5 — calibrar_projetor: Tsai inverse pinhole via OpenCV nativo.
+# Passo 6 — verificar_rotacao_projetor + montar_matriz_projecao (P).
+# Passo 7 — project_3d_to_projector: w_proj = P · w_gs em runtime.
+# A orquestração pura dos passos 3–6 é pipeline_calibracao_projetor.
+
+
+def gerar_imagem_tabuleiro(
+    resolucao: Tuple[int, int],
+    cantos_internos: Tuple[int, int] = (7, 5),
+    margem_frac: float = 0.12,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Passo 1 — Gera a imagem de tabuleiro projetada, com os vértices
+    internos em coordenadas de pixel **conhecidas analiticamente**.
+
+    Esses vértices (no referencial da imagem do projetor) são as
+    correspondências 2D do lado "Image" da calibração de Tsai — o lado
+    3D vem da detecção dos mesmos vértices pela câmera RGB do Kinect.
+
+    A ordem dos cantos retornados é **row-major a partir do canto
+    superior esquerdo** (linha a linha, esquerda → direita) — a mesma
+    convenção de ``cv2.findChessboardCorners``, permitindo o pareamento
+    índice a índice com os cantos detectados.
+
+    Parameters
+    ----------
+    resolucao : (largura, altura)
+        Resolução da imagem do projetor em pixels.
+    cantos_internos : (colunas, linhas)
+        Número de cantos internos do tabuleiro (padrão 7×5 → 8×6 casas).
+    margem_frac : float
+        Fração da menor dimensão deixada como borda branca (o tabuleiro
+        precisa de borda clara para o detector do OpenCV funcionar).
+
+    Returns
+    -------
+    imagem : np.ndarray, shape (altura, largura, 3), uint8
+        Tabuleiro BGR pronto para ``cv2.imshow`` na janela do projetor.
+    cantos_2d : np.ndarray, shape (colunas × linhas, 2), float64
+        Coordenadas (u, v) exatas de cada canto interno na imagem.
+    """
+    largura, altura = resolucao
+    cols, rows = cantos_internos
+    casas_x, casas_y = cols + 1, rows + 1
+
+    margem = int(round(min(largura, altura) * margem_frac))
+    lado = min((largura - 2 * margem) // casas_x,
+               (altura - 2 * margem) // casas_y)
+    if lado < 8:
+        raise ValueError(
+            f"Resolução {resolucao} pequena demais para um tabuleiro "
+            f"{casas_x}×{casas_y} com margem {margem} px."
+        )
+
+    # Centraliza o tabuleiro na imagem
+    x0 = (largura - casas_x * lado) // 2
+    y0 = (altura - casas_y * lado) // 2
+
+    imagem = np.full((altura, largura, 3), 255, dtype=np.uint8)
+    for i in range(casas_y):
+        for j in range(casas_x):
+            if (i + j) % 2 == 0:
+                cv2.rectangle(
+                    imagem,
+                    (x0 + j * lado, y0 + i * lado),
+                    (x0 + (j + 1) * lado - 1, y0 + (i + 1) * lado - 1),
+                    (0, 0, 0), thickness=-1,
+                )
+
+    us = x0 + lado * np.arange(1, cols + 1, dtype=np.float64)
+    vs = y0 + lado * np.arange(1, rows + 1, dtype=np.float64)
+    uu, vv = np.meshgrid(us, vs)                       # row-major
+    cantos_2d = np.column_stack([uu.ravel(), vv.ravel()])
+    return imagem, cantos_2d
+
+
+def _reordenar_cantos_detectados(cantos: np.ndarray) -> np.ndarray:
+    """Alinha a ordem dos cantos detectados à ordem de geração.
+
+    ``cv2.findChessboardCorners`` pode devolver a sequência girada em
+    180° (começando pelo canto inferior direito) dependendo da
+    orientação do padrão em relação à câmera.  Como o pareamento com os
+    cantos do projetor é índice a índice, uma inversão de 180° trocaria
+    todas as correspondências.  Heurística: se o primeiro canto está
+    abaixo do último na imagem, a sequência está invertida — basta
+    revertê-la.  (Espelhamentos não ocorrem: câmera e projetor olham a
+    superfície pelo mesmo lado.)
+    """
+    cantos = cantos.reshape(-1, 2)
+    if cantos[0, 1] > cantos[-1, 1]:
+        cantos = cantos[::-1].copy()
+    return cantos
+
+
+def cantos_rgb_para_pontos_mesa(
+    cantos_rgb: np.ndarray,
+    profundidade_mm: np.ndarray,
+    intrinsicos: dict,
+    T_final: np.ndarray,
+    janela_mediana: int = 5,
+) -> np.ndarray:
+    """Passo 4 — Converte cantos 2D detectados na imagem do Kinect em
+    pontos 3D no referencial de Gram-Schmidt da mesa.
+
+    Para cada canto (u, v): amostra a profundidade numa janela (mediana,
+    robusta a pixels sem retorno), faz a back-projection pinhole na
+    convenção de sinal da mesa (``Z_mesa_sensor = -Z_real``, ver
+    :func:`profundidade_para_nuvem_mesa`) e aplica ``T_final``
+    (Kinect → Mesa, obtida via RANSAC + SVD + Gram-Schmidt).  Como o
+    tabuleiro está projetado sobre uma superfície plana, os pontos
+    resultantes são **coplanares** (Z ≈ constante) no referencial da
+    mesa — exatamente o alvo planar do Tsai coplanar.
+
+    Parameters
+    ----------
+    cantos_rgb : np.ndarray, shape (N, 2) ou (N, 1, 2)
+        Cantos detectados na imagem da câmera (pixels).
+    profundidade_mm : np.ndarray, shape (H, W)
+        Mapa de profundidade em milímetros, **registrado** no mesmo
+        referencial/resolução da imagem em que os cantos foram
+        detectados.  Se as resoluções diferirem, os cantos são
+        reescalados proporcionalmente (aproximação — válida apenas para
+        streams alinhados de FOV equivalente).
+    intrinsicos : dict
+        ``fx, fy, cx, cy`` da câmera usada na detecção.
+    T_final : np.ndarray, shape (4, 4)
+        Matriz de calibração Kinect → Mesa.
+    janela_mediana : int
+        Lado da janela (px) da mediana de profundidade em cada canto.
+
+    Returns
+    -------
+    np.ndarray, shape (N, 3)
+        Pontos no referencial de Gram-Schmidt da mesa (metros).
+
+    Raises
+    ------
+    RuntimeError
+        Se algum canto cair numa região sem leitura de profundidade.
+    """
+    cantos = np.asarray(cantos_rgb, dtype=np.float64).reshape(-1, 2)
+    h, w = profundidade_mm.shape[:2]
+
+    escala = 1.0
+    if np.any(cantos[:, 0] >= w) or np.any(cantos[:, 1] >= h):
+        # Cantos vêm de uma imagem de resolução diferente do mapa de
+        # profundidade — reescala proporcional (streams alinhados).
+        escala_x = w / (np.max(cantos[:, 0]) + 1)
+        escala = escala_x  # aviso: aproximação, ver docstring
+    cantos_prof = cantos * escala
+
+    meia = max(janela_mediana // 2, 1)
+    pontos_sensor = np.empty((cantos.shape[0], 3), dtype=np.float64)
+    for k, (u, v) in enumerate(cantos_prof):
+        ui, vi = int(round(u)), int(round(v))
+        u0, u1 = max(ui - meia, 0), min(ui + meia + 1, w)
+        v0, v1 = max(vi - meia, 0), min(vi + meia + 1, h)
+        janela = profundidade_mm[v0:v1, u0:u1].astype(np.float64)
+        validos = janela[janela > 0]
+        if validos.size == 0:
+            raise RuntimeError(
+                f"Canto {k} em ({ui}, {vi}): nenhuma leitura de "
+                "profundidade válida na vizinhança — superfície fora do "
+                "alcance do sensor ou reflexiva."
+            )
+        Z_real = float(np.median(validos)) / 1000.0     # m
+        # Back-projection na convenção da mesa (mesma de capturar_nuvem)
+        X = (cantos[k, 0] * escala - intrinsicos["cx"]) * Z_real / intrinsicos["fx"]
+        Y = (cantos[k, 1] * escala - intrinsicos["cy"]) * Z_real / intrinsicos["fy"]
+        pontos_sensor[k] = (X, Y, -Z_real)
+
+    return transformar_pontos(T_final, pontos_sensor)
+
+
+@dataclass
+class CalibracaoProjetor:
+    """Resultado completo da calibração do projetor (passos 3–6).
+
+    Attributes
+    ----------
+    camera_matrix : np.ndarray, shape (3, 3)
+        Intrínsecos K do projetor.
+    dist_coeffs : np.ndarray, shape (5, 1)
+        Distorção (fixada em zero na calibração).
+    rvec, tvec : np.ndarray, shape (3, 1)
+        Extrínsecos Mesa → Projetor (convenção OpenCV), expressos no
+        referencial **retificado** da mesa (ver nota de quiralidade em
+        :func:`pipeline_calibracao_projetor`) — é sobre eles que o
+        sanity check do eixo Z é feito.
+    R : np.ndarray, shape (3, 3)
+        Rotação (Rodrigues de ``rvec``).
+    P : np.ndarray, shape (3, 4)
+        Matriz de projeção que mapeia coordenadas **originais** do
+        referencial de Gram-Schmidt para pixels do projetor (o espelho
+        de retificação já está reabsorvido) — o passo 7 usa ``P``.
+    erro_rms_px : float
+        Erro RMS de reprojeção (px).
+    sanidade_ok : bool
+        Resultado de :func:`verificar_rotacao_projetor`.
+    pontos_3d_mesa : np.ndarray, shape (N, 3)
+        Pontos 3D usados (referencial de Gram-Schmidt) — diagnóstico.
+    cantos_detectados : np.ndarray, shape (N, 2)
+        Cantos na imagem da câmera — diagnóstico.
+    """
+    camera_matrix: np.ndarray
+    dist_coeffs: np.ndarray
+    rvec: np.ndarray
+    tvec: np.ndarray
+    R: np.ndarray
+    P: np.ndarray
+    erro_rms_px: float
+    sanidade_ok: bool
+    pontos_3d_mesa: np.ndarray = field(default_factory=lambda: np.empty((0, 3)))
+    cantos_detectados: np.ndarray = field(default_factory=lambda: np.empty((0, 2)))
+
+
+def pipeline_calibracao_projetor(
+    imagem_rgb: np.ndarray,
+    profundidade_mm: np.ndarray,
+    intrinsicos_rgb: dict,
+    T_final: np.ndarray,
+    cantos_2d_projetor: np.ndarray,
+    tamanho_tabuleiro: Tuple[int, int],
+    resolucao_projetor: Tuple[int, int],
+    focal_inicial_px: Optional[float] = None,
+    ponto_principal: Optional[Tuple[float, float]] = None,
+    fixar_intrinsecos: bool = False,
+    verboso: bool = True,
+) -> CalibracaoProjetor:
+    """Orquestra os passos 3–6 do pipeline de calibração do projetor.
+
+    Pré-condições: o tabuleiro de :func:`gerar_imagem_tabuleiro` já está
+    sendo projetado na superfície plana (passo 1) e ``imagem_rgb`` /
+    ``profundidade_mm`` acabaram de ser capturados (passo 2).
+
+    3. Detecta os cantos do tabuleiro na imagem da câmera
+       (``cv2.findChessboardCorners`` + refinamento sub-pixel).
+    4. Converte cada canto em um ponto 3D no referencial de
+       Gram-Schmidt via profundidade + ``T_final``.
+    5. Calibra o projetor (inverse pinhole) com OpenCV nativo,
+       pareando os pontos 3D com os pixels **originais** do grid do
+       projetor.  Dois cuidados de conversão (ver nota de quiralidade
+       no corpo da função e :func:`_calibrar_variante`): o plano
+       Z ≈ h é transladado para Z = 0 (exigência do alvo planar do
+       OpenCV) com recomposição posterior da translação, e o
+       referencial da mesa é retificado (espelho em Y) para que a
+       pose recuperada seja própria e fisicamente plausível.
+    6. Sanity check da rotação + montagem de ``P = K·[R|T]``
+       (com o espelho de retificação reabsorvido em ``P``).
+
+    Parameters
+    ----------
+    imagem_rgb : np.ndarray
+        Frame BGR da câmera do Kinect vendo o tabuleiro projetado.
+    profundidade_mm : np.ndarray, shape (H, W)
+        Mapa de profundidade correspondente (mm).
+    intrinsicos_rgb : dict
+        ``fx, fy, cx, cy`` da câmera RGB (calibração já existente).
+    T_final : np.ndarray, shape (4, 4)
+        Matriz Kinect → Mesa (RANSAC + SVD + Gram-Schmidt).
+    cantos_2d_projetor : np.ndarray, shape (N, 2)
+        Pixels conhecidos dos cantos na imagem do projetor (passo 1).
+    tamanho_tabuleiro : (colunas, linhas)
+        Cantos internos — deve casar com ``gerar_imagem_tabuleiro``.
+    resolucao_projetor : (largura, altura)
+        Resolução nativa do projetor.
+    focal_inicial_px, ponto_principal, fixar_intrinsecos
+        Repassados a :func:`calibrar_projetor` (ver lá a discussão de
+        condicionamento para montagem nadir).
+    verboso : bool
+        Imprime o diagnóstico completo (R, T, sanity check, erro).
+
+    Returns
+    -------
+    CalibracaoProjetor
+
+    Raises
+    ------
+    RuntimeError
+        Se o tabuleiro não for encontrado na imagem da câmera, ou se a
+        contagem de cantos não casar com ``cantos_2d_projetor``.
+    """
+    # ── Passo 3: detecção dos cantos na imagem da câmera ──
+    encontrado, cantos_cam = encontrar_cantos_tabuleiro(
+        imagem_rgb, tamanho_tabuleiro, refinar=True,
+    )
+    if not encontrado:
+        raise RuntimeError(
+            "Tabuleiro não encontrado na imagem da câmera — verifique "
+            "foco/exposição do Kinect e se o tabuleiro projetado está "
+            "inteiro dentro do campo de visão."
+        )
+    cantos_cam = _reordenar_cantos_detectados(cantos_cam)
+
+    cantos_proj = np.asarray(cantos_2d_projetor, dtype=np.float64).reshape(-1, 2)
+    if cantos_cam.shape[0] != cantos_proj.shape[0]:
+        raise RuntimeError(
+            f"Detectados {cantos_cam.shape[0]} cantos, esperados "
+            f"{cantos_proj.shape[0]} — tamanho_tabuleiro inconsistente."
+        )
+
+    # ── Passo 4: cantos → 3D no referencial de Gram-Schmidt ──
+    pontos_mesa = cantos_rgb_para_pontos_mesa(
+        cantos_cam, profundidade_mm, intrinsicos_rgb, T_final,
+    )
+
+    # ── Passos 5 e 6: calibração + sanity check + matriz P ──
+    #
+    # Nota de quiralidade: o referencial da mesa é construído sobre a
+    # nuvem ``[X, Y, -Z]`` (ver profundidade_para_nuvem_mesa), que é uma
+    # imagem ESPELHADA do mundo físico (det = -1).  Um alvo planar
+    # espelhado ainda é ajustável exatamente por uma pose própria do
+    # OpenCV — mas essa pose-espelho tem o eixo óptico apontando para
+    # +Z (reprovada pelo sanity check) e inverte a paralaxe de pontos
+    # FORA do plano (a areia!).  A correção é calibrar no referencial
+    # retificado (Y invertido, tornando-o destro) e reabsorver o
+    # espelho na matriz P final.  A escolha é empírica: calibra nas
+    # duas variantes e fica com a que passa no sanity check do eixo Z.
+    melhor = None
+    for espelhar in (True, False):
+        resultado = _calibrar_variante(
+            pontos_mesa, cantos_proj, resolucao_projetor, espelhar,
+            focal_inicial_px, ponto_principal, fixar_intrinsecos,
+        )
+        if melhor is None or (resultado[-1] and not melhor[-1]):
+            melhor = resultado
+        if resultado[-1]:
+            break
+    (camera_matrix, dist_coeffs, rvec, tvec, R, P,
+     erro_rms, espelhado, sanidade_ok) = melhor
+
+    if verboso:
+        verificar_rotacao_projetor(rvec, tvec, verboso=True)
+        h_plano = float(np.mean(pontos_mesa[:, 2]))
+        print(f"[Calibração Projetor] Plano de projeção em Z = {h_plano:.4f} m "
+              "(referencial da mesa)")
+        print(f"[Calibração Projetor] Referencial retificado (espelho em Y): "
+              f"{'sim' if espelhado else 'não'}")
+        print(f"[Calibração Projetor] Erro RMS de reprojeção: {erro_rms:.3f} px")
+
+    return CalibracaoProjetor(
+        camera_matrix=camera_matrix,
+        dist_coeffs=dist_coeffs,
+        rvec=rvec,
+        tvec=tvec,
+        R=R,
+        P=P,
+        erro_rms_px=erro_rms,
+        sanidade_ok=sanidade_ok,
+        pontos_3d_mesa=pontos_mesa,
+        cantos_detectados=cantos_cam,
+    )
+
+
+def _calibrar_variante(
+    pontos_mesa: np.ndarray,
+    cantos_proj: np.ndarray,
+    resolucao_projetor: Tuple[int, int],
+    espelhar_y: bool,
+    focal_inicial_px: Optional[float],
+    ponto_principal: Optional[Tuple[float, float]],
+    fixar_intrinsecos: bool,
+) -> tuple:
+    """Calibra o projetor numa variante do referencial da mesa.
+
+    ``espelhar_y=True`` calibra no referencial retificado (Y invertido,
+    que torna o referencial da mesa destro) — o espelho é reabsorvido
+    na matriz ``P`` devolvida, de modo que ``P`` sempre projeta
+    coordenadas **originais** da mesa.
+
+    O alvo planar do OpenCV exige Z = 0; os pontos estão em Z ≈ h
+    (altura da superfície de projeção).  Translada para Z = 0, calibra,
+    e recompõe: com ``X' = X − h·e_z``, ``x_cam = R·X' + t'`` ⇒
+    ``t = t' − h·R·e_z``.
+
+    Returns
+    -------
+    (camera_matrix, dist_coeffs, rvec, tvec, R, P, erro_rms,
+     espelhar_y, sanidade_ok)
+    """
+    G = np.diag([1.0, -1.0, 1.0]) if espelhar_y else np.eye(3)
+    pontos = pontos_mesa @ G          # G é diagonal ⇒ G.T = G
+
+    h_plano = float(np.mean(pontos[:, 2]))
+    pontos_z0 = pontos - np.array([0.0, 0.0, h_plano])
+
+    camera_matrix, dist_coeffs, rvec, tvec, erro_rms = calibrar_projetor(
+        pontos_z0, cantos_proj, resolucao_projetor,
+        focal_inicial_px=focal_inicial_px,
+        ponto_principal=ponto_principal,
+        fixar_intrinsecos=fixar_intrinsecos,
+    )
+    R, _ = cv2.Rodrigues(rvec)
+    tvec = tvec.reshape(3, 1) - h_plano * R[:, 2].reshape(3, 1)
+    rvec = np.asarray(rvec, dtype=np.float64).reshape(3, 1)
+
+    sanidade_ok = verificar_rotacao_projetor(rvec, tvec, verboso=False)
+
+    # P projeta coordenadas ORIGINAIS da mesa: primeiro G (espelho),
+    # depois a pose própria — P = K·[R|t]·[G 0; 0 1].
+    G_hom = np.eye(4)
+    G_hom[:3, :3] = G
+    P = montar_matriz_projecao(camera_matrix, rvec, tvec) @ G_hom
+
+    return (camera_matrix, dist_coeffs, rvec, tvec, R, P,
+            erro_rms, espelhar_y, sanidade_ok)
+
+
+def salvar_calibracao_projetor(
+    cal: CalibracaoProjetor,
+    caminho: Union[str, Path] = "calibration_data.json",
+) -> None:
+    """Persiste a calibração do projetor no mesmo JSON de ``T_final``.
+
+    Grava sob a chave ``"projetor"`` sem alterar o esquema existente —
+    ``carregar_matriz_calibracao`` ignora chaves extras, então caches
+    antigos e novos permanecem compatíveis nos dois sentidos.
+    """
+    caminho = Path(caminho)
+    try:
+        dados = json.loads(caminho.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        dados = {"versao": VERSAO_ESQUEMA_CALIBRACAO}
+
+    dados["projetor"] = {
+        "camera_matrix": cal.camera_matrix.tolist(),
+        "rvec": cal.rvec.ravel().tolist(),
+        "tvec": cal.tvec.ravel().tolist(),
+        "P": cal.P.tolist(),
+        "erro_rms_px": cal.erro_rms_px,
+        "sanidade_ok": bool(cal.sanidade_ok),
+    }
+    caminho.write_text(json.dumps(dados, indent=2), encoding="utf-8")
+
+
+def carregar_calibracao_projetor(
+    caminho: Union[str, Path] = "calibration_data.json",
+) -> Optional[CalibracaoProjetor]:
+    """Carrega a calibração do projetor do cache JSON, se existir.
+
+    Returns
+    -------
+    CalibracaoProjetor | None
+        ``None`` se o arquivo não existe, está corrompido ou não contém
+        o bloco ``"projetor"`` (nesse caso o chamador deve recalibrar
+        ou usar o fallback de projeção virtual).
+    """
+    caminho = Path(caminho)
+    if not caminho.is_file():
+        return None
+    try:
+        dados = json.loads(caminho.read_text(encoding="utf-8"))
+        bloco = dados["projetor"]
+        camera_matrix = np.array(bloco["camera_matrix"], dtype=np.float64)
+        rvec = np.array(bloco["rvec"], dtype=np.float64).reshape(3, 1)
+        tvec = np.array(bloco["tvec"], dtype=np.float64).reshape(3, 1)
+        P = np.array(bloco["P"], dtype=np.float64)
+        erro = float(bloco.get("erro_rms_px", float("nan")))
+        sanidade = bool(bloco.get("sanidade_ok", False))
+    except (json.JSONDecodeError, KeyError, ValueError, TypeError):
+        return None
+
+    if camera_matrix.shape != (3, 3) or P.shape != (3, 4):
+        return None
+    R, _ = cv2.Rodrigues(rvec)
+    return CalibracaoProjetor(
+        camera_matrix=camera_matrix,
+        dist_coeffs=np.zeros((5, 1)),
+        rvec=rvec,
+        tvec=tvec,
+        R=R,
+        P=P,
+        erro_rms_px=erro,
+        sanidade_ok=sanidade,
+    )
 
 
 # ============================================================================
@@ -943,13 +1665,20 @@ def _obter_vertices_grade_projetados(
     tvec: np.ndarray,
     camera_matrix: np.ndarray,
     dist_coeffs: np.ndarray,
+    P: Optional[np.ndarray] = None,
 ) -> np.ndarray:
-    """Projeta (com cache) os vértices da malha via Tsai — ver
-    ``_CACHE_VERTICES_GRADE`` para a justificativa do cache."""
+    """Projeta (com cache) os vértices da malha — ver
+    ``_CACHE_VERTICES_GRADE`` para a justificativa do cache.
+
+    Com ``P`` (matriz 3×4 da calibração REAL do projetor,
+    :func:`pipeline_calibracao_projetor`), os vértices são projetados
+    por ``P·w`` (passo 7 do pipeline); sem ela, cai na pose virtual
+    ``rvec/tvec/K`` via ``cv2.projectPoints``."""
     chave = (
         n_celulas_x, n_celulas_y, largura_mesa, comprimento_mesa,
         rvec.tobytes(), tvec.tobytes(),
         camera_matrix.tobytes(), dist_coeffs.tobytes(),
+        P.tobytes() if P is not None else None,
     )
     vertices_2d = _CACHE_VERTICES_GRADE.get(chave)
     if vertices_2d is not None:
@@ -962,9 +1691,15 @@ def _obter_vertices_grade_projetados(
         xx.ravel(), yy.ravel(), np.zeros(xx.size)
     ])  # (V, 3) com Z = 0 (plano da mesa)
 
-    vertices_2d = projetar_pontos_tsai(
-        vertices_3d, rvec, tvec, camera_matrix, dist_coeffs,
-    ).reshape(n_celulas_y + 1, n_celulas_x + 1, 2)  # indexável por [lin, col]
+    if P is not None:
+        vertices_2d = project_3d_to_projector(vertices_3d, P)
+    else:
+        vertices_2d = projetar_pontos_tsai(
+            vertices_3d, rvec, tvec, camera_matrix, dist_coeffs,
+        )
+    vertices_2d = vertices_2d.reshape(
+        n_celulas_y + 1, n_celulas_x + 1, 2
+    )  # indexável por [lin, col]
 
     if len(_CACHE_VERTICES_GRADE) > 8:  # defesa contra crescimento ilimitado
         _CACHE_VERTICES_GRADE.clear()
@@ -986,6 +1721,7 @@ def gerar_imagem_grade_cores(
     dist_coeffs: np.ndarray,
     resolucao: Tuple[int, int],
     funcao_mde_vetorizada: Optional[Callable[[np.ndarray, np.ndarray], np.ndarray]] = None,
+    P: Optional[np.ndarray] = None,
 ) -> np.ndarray:
     """Gera a imagem AR usando discretização em malha de quadrados coloridos.
 
@@ -993,13 +1729,14 @@ def gerar_imagem_grade_cores(
 
     1. **Discretização** — agrupa a nuvem de pontos do Kinect em uma
        grade regular de ``n_celulas_y × n_celulas_x`` células e calcula
-       a altura média :math:`Z_{real\_media}` por célula.
+       a altura média de Z real por célula.
     2. **Comparação com MDE** — para cada célula com dados, consulta
        ``funcao_mde(x_centro, y_centro)`` para obter :math:`Z_{MDE}` e
        aplica a classificação de cores (Vermelho / Azul / Verde).
-    3. **Projeção Tsai** — projeta todos os vértices da grade (malha
-       de :math:`(N_y+1) \times (N_x+1)` pontos) de uma só vez via
-       ``cv2.projectPoints``, evitando chamadas repetidas.
+    3. **Projeção** — projeta todos os vértices da grade (malha de
+       ``(N_y+1) × (N_x+1)`` pontos) de uma só vez — via ``P·w`` quando
+       a calibração real do projetor existe, ou ``cv2.projectPoints``
+       com a pose virtual como fallback.
     4. **Rasterização** — desenha cada célula como um polígono
        preenchido (``cv2.fillPoly``) com a cor correspondente,
        garantindo cobertura contínua sem buracos.
@@ -1040,6 +1777,11 @@ def gerar_imagem_grade_cores(
         por uma única chamada NumPy — essencial para manter a taxa de
         quadros em hardware modesto.  Se ``None``, cai no caminho escalar
         (compatível com qualquer ``funcao_mde``).
+    P : np.ndarray, shape (3, 4) | None
+        Matriz de projeção da calibração REAL do projetor
+        (:func:`pipeline_calibracao_projetor`).  Quando fornecida, a
+        projeção dos vértices usa ``P·w`` (passo 7 do pipeline do
+        orientador) e ``rvec/tvec/camera_matrix`` são ignorados.
 
     Returns
     -------
@@ -1065,7 +1807,7 @@ def gerar_imagem_grade_cores(
     #      ``_obter_vertices_grade_projetados``: só muda ao recalibrar) ──
     vertices_2d = _obter_vertices_grade_projetados(
         n_celulas_x, n_celulas_y, largura_mesa, comprimento_mesa,
-        rvec, tvec, camera_matrix, dist_coeffs,
+        rvec, tvec, camera_matrix, dist_coeffs, P=P,
     )
 
     # ── 3. Coloração vetorizada da grade inteira ──

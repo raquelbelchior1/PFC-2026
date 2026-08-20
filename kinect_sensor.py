@@ -257,8 +257,12 @@ class KinectSensor:
             from pykinect2 import PyKinectV2
             from pykinect2.PyKinectRuntime import PyKinectRuntime
 
-            # Abre o stream de profundidade (FrameSourceTypes_Depth = 8)
-            kinect = PyKinectRuntime(PyKinectV2.FrameSourceTypes_Depth)
+            # Abre profundidade + cor: a cor (câmera RGB) é usada na
+            # calibração do projetor (detecção do tabuleiro projetado).
+            kinect = PyKinectRuntime(
+                PyKinectV2.FrameSourceTypes_Depth
+                | PyKinectV2.FrameSourceTypes_Color
+            )
 
             # Aguarda até 3 s para o primeiro frame chegar
             # (o Kinect v2 precisa de ~1-2 s para inicializar)
@@ -467,6 +471,53 @@ class KinectSensor:
         ruido = np.random.normal(0, 3, profundidade.shape).astype(np.float32)
 
         return np.clip(profundidade + ruido, 0, 65535).astype(np.uint16)
+
+    # ------------------------------------------------------------------
+    # Captura: imagem RGB (usada na calibração do projetor)
+    # ------------------------------------------------------------------
+
+    def capturar_rgb(self) -> Optional[np.ndarray]:
+        """Retorna um frame BGR da câmera de cor, ou ``None`` se o
+        backend ativo não oferece stream de cor (modo simulação).
+
+        Usado no pipeline de calibração do projetor: o tabuleiro
+        projetado na superfície é capturado por esta câmera e os cantos
+        são detectados via ``cv2.findChessboardCorners``.
+
+        Returns
+        -------
+        np.ndarray, shape (H, W, 3), dtype uint8 | None
+            Imagem BGR (padrão OpenCV), ou ``None`` sem stream de cor.
+        """
+        if self.modo == ModoSensor.REAL_PYKINECT2:
+            kinect = self._pykinect2_kinect
+            deadline = time.time() + 2.0
+            while time.time() < deadline:
+                if kinect.has_new_color_frame():
+                    frame = kinect.get_last_color_frame()
+                    if frame is not None:
+                        # Kinect v2: 1920×1080 BGRA (uint8) achatado
+                        bgra = frame.reshape(1080, 1920, 4)
+                        return np.ascontiguousarray(bgra[:, :, :3])
+                time.sleep(0.02)
+            logger.warning("PyKinect2: nenhum frame de cor em 2 s.")
+            return None
+
+        if self.modo == ModoSensor.REAL_FREENECT:
+            rgb, _ = self._freenect_mod.sync_get_video()
+            if rgb is None:
+                return None
+            return cv2.cvtColor(np.asarray(rgb, dtype=np.uint8), cv2.COLOR_RGB2BGR)
+
+        if self.modo == ModoSensor.REAL_OPEN3D:
+            rgbd = self._o3d_sensor.capture_frame(True)
+            if rgbd is None:
+                return None
+            rgb = np.asarray(rgbd.color)
+            return cv2.cvtColor(rgb.astype(np.uint8), cv2.COLOR_RGB2BGR)
+
+        # Modo simulação: não há câmera RGB física.
+        return None
 
     # ------------------------------------------------------------------
     # Captura: nuvem de pontos 3D (N, 3)
