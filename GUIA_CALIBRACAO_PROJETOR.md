@@ -206,14 +206,28 @@ do OpenCV, chamada dentro de `projetar_pontos_tsai` (`motor_caixao_areia.py:609`
 
 Existem dois jeitos de conseguir esses parâmetros:
 
-- **Jeito empírico:** projetar um padrão conhecido (tabuleiro de xadrez), detectar
-  onde ele caiu, e deixar o computador *estimar* os parâmetros por otimização.
-  O projeto **tem** esse caminho pronto (`calibrar_projetor` com
-  `cv2.calibrateCamera`, `motor_caixao_areia.py:615`, e a detecção de tabuleiro em
-  `encontrar_cantos_tabuleiro`, linha 528), coberto por testes unitários —
-  **mas ele não é usado no pipeline em execução.**
+- **Jeito empírico (o usado com hardware real):** projetar um padrão conhecido
+  (tabuleiro de xadrez), detectar onde ele caiu, e deixar o computador *estimar*
+  os parâmetros por otimização (`calibrar_projetor` com `cv2.calibrateCamera` e a
+  detecção de tabuleiro em `encontrar_cantos_tabuleiro`, ambos em
+  `motor_caixao_areia.py`, cobertos por testes unitários). É executado por
+  `_executar_calibracao_projetor` (`main.py`) logo após a calibração do plano,
+  com a superfície de referência ainda no lugar.
 
-- **Jeito analítico (o usado):** como o projetor é **montado fisicamente alinhado**,
+  **O chute inicial da focal (e o slider "Zoom do projetor").** A otimização
+  não linear refina `fx = fy` a partir de um chute inicial
+  `fator × largura_px`. O padrão é **1.2** (razão de projeção — *throw ratio*,
+  distância ÷ largura da imagem — típica de projetores convencionais), mas é só
+  um ponto de partida: se o zoom/throw real do projetor for muito diferente, a
+  otimização pode convergir para um **mínimo local** errado — o sintoma é a
+  colorização cair deslocada da areia. Por isso o fator é exposto ao operador em
+  dois lugares: um **slider na GUI de configuração** (aba Calibração,
+  inicializado em 1.2) e um **trackbar "Zoom proj x100" na janela Gabarito**
+  durante a calibração. Se calibrar errado, aproxime o valor do zoom real do
+  projetor e recalibre com `[C]` até a projeção casar; o console imprime a focal
+  estimada (em `× largura`) a cada calibração para guiar o ajuste.
+
+- **Jeito analítico (o fallback / simulação):** como o projetor é **montado fisicamente alinhado**,
   apontando reto para baixo, centrado sobre a mesa, os parâmetros podem ser
   *deduzidos no papel* em vez de medidos. É o que `_calcular_parametros_projecao`
   (`main.py:389`) faz:
@@ -365,7 +379,7 @@ Liste isso explicitamente para o professor — mostra domínio do assunto:
 | Cache da calibração | `calibration_data.json`, `motor_caixao_areia.py:440` |
 | Parâmetros de Tsai (analíticos) | `_calcular_parametros_projecao`, `main.py:389` |
 | Projeção de Tsai (projectPoints) | `projetar_pontos_tsai`, `motor_caixao_areia.py:571` |
-| Calibração empírica (não ativada) | `calibrar_projetor`, `motor_caixao_areia.py:615` |
+| Calibração empírica do projetor | `calibrar_projetor` (motor) + `_executar_calibracao_projetor` (main) |
 | Pipeline por frame | `_processar_frame_ar`, `main.py:642` |
 
 ---

@@ -178,7 +178,17 @@ CONFIG_PADRAO: dict = {
     "profundidade_caixao_cm": 20.0,
     "distancia_kinect_tampa_cm": 250.0,
     "tolerancia_altura_cm": 2.0,
+    "fator_focal_projetor": 1.2,
 }
+
+FATOR_FOCAL_MIN: float = 0.3
+FATOR_FOCAL_MAX: float = 3.0
+"""Faixa do fator de focal do projetor (razão de projeção ≈ distância ÷
+largura da imagem projetada): 0.3 cobre ultra-curta distância e 3.0
+teleobjetivas/zoom longo.  O chute inicial da calibração do projetor é
+``fator × largura_px`` — 1.2 é típico, mas projetores com zoom/throw
+muito diferente convergem para um mínimo local errado, daí o fator ser
+ajustável pelo operador (slider na GUI + trackbar na recalibração)."""
 
 CAMINHO_CALIBRACAO: str = "calibration_data.json"
 """Cache local da matriz de calibração T_final (4×4).  Carregado
@@ -199,6 +209,11 @@ JANELA_PROJECAO: str = "Projecao_Areia"
 JANELA_GABARITO: str = "Gabarito_MDE"
 """Nome da janela OpenCV com o heatmap de referência do MDE."""
 
+TRACKBAR_FOCAL: str = "Zoom proj x100"
+"""Trackbar na janela Gabarito com o fator de focal do projetor ×100
+(120 = 1.2 × largura).  Permite ajustar o chute inicial e recalibrar
+com [C] sem reiniciar o programa (ver ``FATOR_FOCAL_MIN/MAX``)."""
+
 # ---------------------------------------------------------------------
 # Parâmetros efetivos de execução — apenas anotados aqui (sem valor).
 # São atribuídos em main() a partir do dicionário devolvido pela GUI de
@@ -213,6 +228,7 @@ COMPRIMENTO_MESA: float
 PROFUNDIDADE_CAIXA: float
 DISTANCIA_KINECT_TAMPA: float
 MODO_CALIBRACAO: str
+FATOR_FOCAL_PROJETOR: float
 
 # ---------------------------------------------------------------------
 # Parâmetros internos fixos — valores estáveis que não dependem da
@@ -509,6 +525,13 @@ def _executar_calibracao_projetor(
     A tecla [ESC] pula a etapa (mantém o fallback virtual).  Uma
     detecção falhada permite tentar de novo sem sair do laço.
 
+    O chute inicial da focal é ``fator × largura_px``, com o fator vindo
+    do slider da GUI (padrão 1.2) espelhado no trackbar "Zoom proj" da
+    janela Gabarito.  Como a otimização não linear pode convergir para
+    um mínimo local quando o zoom/throw real do projetor está longe do
+    chute, o operador pode mover o trackbar e recapturar ([ESPAÇO], ou
+    [C] mais tarde) até a projeção casar — sem reiniciar o programa.
+
     Returns
     -------
     bool
@@ -524,12 +547,31 @@ def _executar_calibracao_projetor(
         RESOLUCAO_PROJETOR, TABULEIRO_CALIBRACAO,
     )
 
+    # Trackbar do fator de focal na janela de controle (não na projetada,
+    # para não sujar a imagem no projetor).  Criado uma única vez;
+    # recalibrações posteriores ([C]) reencontram o trackbar existente e
+    # preservam a posição escolhida pelo operador.
+    try:
+        cv2.getTrackbarPos(TRACKBAR_FOCAL, JANELA_GABARITO)
+    except cv2.error:
+        cv2.createTrackbar(
+            TRACKBAR_FOCAL, JANELA_GABARITO,
+            int(round(FATOR_FOCAL_PROJETOR * 100)),
+            int(round(FATOR_FOCAL_MAX * 100)), lambda _v: None,
+        )
+        cv2.setTrackbarMin(
+            TRACKBAR_FOCAL, JANELA_GABARITO, int(round(FATOR_FOCAL_MIN * 100)),
+        )
+
     print("\n" + "=" * 50)
     print("  CALIBRAÇÃO DO PROJETOR — Tsai inverse pinhole (OpenCV)")
     print("=" * 50)
     print("  Tabuleiro projetado na superfície de referência.")
     print("  [ESPAÇO]/[ENTER] captura e calibra  |  [ESC] pula "
           "(mantém projeção virtual aproximada)")
+    print(f"  Chute da focal: trackbar '{TRACKBAR_FOCAL}' na janela "
+          f"{JANELA_GABARITO} (120 = 1.2 × largura). Se a calibração "
+          "convergir errado, aproxime-o do zoom real e recapture.")
 
     while True:
         cv2.imshow(JANELA_PROJECAO, imagem_tab)
@@ -551,6 +593,12 @@ def _executar_calibracao_projetor(
             return False
         profundidade = sensor.capturar_profundidade()
 
+        fator_focal = cv2.getTrackbarPos(TRACKBAR_FOCAL, JANELA_GABARITO) / 100.0
+        fator_focal = min(max(fator_focal, FATOR_FOCAL_MIN), FATOR_FOCAL_MAX)
+        focal_inicial_px = fator_focal * RESOLUCAO_PROJETOR[0]
+        print(f"  Chute inicial da focal: {fator_focal:.2f} × "
+              f"{RESOLUCAO_PROJETOR[0]} px = {focal_inicial_px:.0f} px")
+
         try:
             cal = pipeline_calibracao_projetor(
                 imagem_rgb,
@@ -560,6 +608,7 @@ def _executar_calibracao_projetor(
                 cantos_proj,
                 TABULEIRO_CALIBRACAO,
                 RESOLUCAO_PROJETOR,
+                focal_inicial_px=focal_inicial_px,
             )
         except RuntimeError as e:
             print(f"  [FALHA] {e}")
@@ -578,8 +627,13 @@ def _executar_calibracao_projetor(
             print("  [ATENÇÃO] Sanity check da rotação FALHOU — a pose "
                   "estimada não condiz com projetor montado na vertical. "
                   "Confira a montagem e recalibre se necessário.")
+        fx_estimado = float(cal.camera_matrix[0, 0])
         print(f"  ✓ Projetor calibrado (erro RMS {cal.erro_rms_px:.2f} px) "
               f"e salvo em '{CAMINHO_CALIBRACAO}'.")
+        print(f"  Focal estimada: {fx_estimado:.0f} px "
+              f"({fx_estimado / RESOLUCAO_PROJETOR[0]:.2f} × largura) — "
+              "se a projeção sair deslocada, mova o trackbar para perto "
+              "desse valor (ou do zoom real) e recalibre com [C].")
         print("=" * 50 + "\n")
         return True
 
@@ -1142,6 +1196,7 @@ def _abrir_gui_configuracao() -> Optional[dict]:
     var_altura_caixa = tk.StringVar(value=str(CONFIG_PADRAO["profundidade_caixao_cm"]))
     var_distancia_kinect = tk.StringVar(value=str(CONFIG_PADRAO["distancia_kinect_tampa_cm"]))
     var_tolerancia = tk.StringVar(value=str(CONFIG_PADRAO["tolerancia_altura_cm"]))
+    var_fator_focal = tk.DoubleVar(value=CONFIG_PADRAO["fator_focal_projetor"])
 
     # ── Validação em tempo real (borda vermelha + foco em azul) ──
     entradas: dict[str, ctk.CTkEntry] = {}
@@ -1218,6 +1273,7 @@ def _abrir_gui_configuracao() -> Optional[dict]:
             "profundidade_caixao_cm": var_altura_caixa.get(),
             "distancia_kinect_tampa_cm": var_distancia_kinect.get(),
             "tolerancia_altura_cm": var_tolerancia.get(),
+            "fator_focal_projetor": round(var_fator_focal.get(), 2),
         }
 
     # Perfis salvos por versões antigas usavam METROS e outros nomes de
@@ -1292,6 +1348,12 @@ def _abrir_gui_configuracao() -> Optional[dict]:
         var_altura_caixa.set(str(dados.get("profundidade_caixao_cm", CONFIG_PADRAO["profundidade_caixao_cm"])))
         var_distancia_kinect.set(str(dados.get("distancia_kinect_tampa_cm", CONFIG_PADRAO["distancia_kinect_tampa_cm"])))
         var_tolerancia.set(str(dados.get("tolerancia_altura_cm", CONFIG_PADRAO["tolerancia_altura_cm"])))
+        try:
+            fator = float(dados.get("fator_focal_projetor",
+                                    CONFIG_PADRAO["fator_focal_projetor"]))
+        except (TypeError, ValueError):
+            fator = CONFIG_PADRAO["fator_focal_projetor"]
+        _definir_fator_focal(min(max(fator, FATOR_FOCAL_MIN), FATOR_FOCAL_MAX))
 
         ao_alternar_demo()
         _sincronizar_seg_modo_calibracao()
@@ -1460,6 +1522,55 @@ def _abrir_gui_configuracao() -> Optional[dict]:
     _registrar_campo(card_calib, 3, 0, "Distância do Kinect até a Tampa de Calibração (cm)", var_distancia_kinect, "distancia_kinect_tampa_cm", "Distância Kinect → tampa")
     _registrar_campo(card_calib, 3, 1, "Tolerância de acerto da areia — pinta VERDE dentro de ± (cm)", var_tolerancia, "tolerancia_altura_cm", "Tolerância de acerto")
 
+    # ── Chute inicial da focal do projetor (slider) ──
+    # A calibração do projetor refina fx=fy por otimização não linear a
+    # partir de um chute inicial fator × largura (1.2 ≈ razão de
+    # projeção típica).  Se o zoom/throw real do projetor for muito
+    # diferente, a otimização converge para um mínimo local errado — o
+    # operador então ajusta este fator e recalibra até a projeção casar.
+    frame_focal = ctk.CTkFrame(card_calib, fg_color="transparent")
+    frame_focal.grid(row=4, column=0, columnspan=2, sticky="ew", padx=10, pady=(8, 12))
+    frame_focal.grid_columnconfigure(0, weight=1)
+
+    ctk.CTkLabel(
+        frame_focal,
+        text="Zoom do projetor — chute inicial da focal (razão de projeção: "
+             "distância ÷ largura da imagem projetada)",
+        font=ctk.CTkFont(size=12), anchor="w", justify="left", wraplength=540,
+    ).grid(row=0, column=0, sticky="w")
+    lbl_valor_fator = ctk.CTkLabel(
+        frame_focal, text=f"{var_fator_focal.get():.2f} × largura",
+        font=ctk.CTkFont(size=12, weight="bold"), anchor="e",
+    )
+    lbl_valor_fator.grid(row=0, column=1, sticky="e", padx=(8, 0))
+
+    def _ao_mover_fator_focal(valor: float) -> None:
+        var_fator_focal.set(round(float(valor), 2))
+        lbl_valor_fator.configure(text=f"{var_fator_focal.get():.2f} × largura")
+
+    slider_fator_focal = ctk.CTkSlider(
+        frame_focal, from_=FATOR_FOCAL_MIN, to=FATOR_FOCAL_MAX,
+        number_of_steps=int(round((FATOR_FOCAL_MAX - FATOR_FOCAL_MIN) / 0.05)),
+        command=_ao_mover_fator_focal,
+    )
+    slider_fator_focal.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(6, 2))
+
+    def _definir_fator_focal(valor: float) -> None:
+        slider_fator_focal.set(valor)
+        _ao_mover_fator_focal(valor)
+
+    _definir_fator_focal(CONFIG_PADRAO["fator_focal_projetor"])
+
+    ctk.CTkLabel(
+        frame_focal,
+        text="Deixe em 1.2 salvo se a calibração do projetor convergir errado "
+             "(pintura deslocada da areia): aproxime do zoom real do seu "
+             "projetor e recalibre com [C]. Durante a calibração o valor "
+             "também pode ser ajustado pelo trackbar da janela Gabarito.",
+        font=ctk.CTkFont(size=11), text_color=("gray40", "gray60"),
+        anchor="w", justify="left", wraplength=540,
+    ).grid(row=2, column=0, columnspan=2, sticky="w")
+
     # ── Rodapé fixo: erro + botão INICIAR (linha 3, sempre visível) ──
     frame_rodape = ctk.CTkFrame(root, fg_color="transparent")
     frame_rodape.grid(row=3, column=0, sticky="ew", padx=20, pady=(0, 16))
@@ -1485,6 +1596,7 @@ def _abrir_gui_configuracao() -> Optional[dict]:
         resultado["profundidade_caixa"] = float(var_altura_caixa.get()) / 100.0
         resultado["distancia_kinect_tampa"] = float(var_distancia_kinect.get()) / 100.0
         resultado["tolerancia_cor"] = float(var_tolerancia.get()) / 100.0
+        resultado["fator_focal_projetor"] = round(var_fator_focal.get(), 2)
         root.destroy()
 
     btn_iniciar = ctk.CTkButton(
@@ -1538,6 +1650,7 @@ def main() -> None:
 
     global CAMINHO_GEOTIFF, LARGURA_MESA, COMPRIMENTO_MESA, PROFUNDIDADE_CAIXA
     global DISTANCIA_KINECT_TAMPA, MODO_CALIBRACAO, TOLERANCIA_COR
+    global FATOR_FOCAL_PROJETOR
 
     CAMINHO_GEOTIFF = config["caminho_geotiff"]
     LARGURA_MESA = config["largura_mesa"]
@@ -1546,6 +1659,7 @@ def main() -> None:
     DISTANCIA_KINECT_TAMPA = config["distancia_kinect_tampa"]
     MODO_CALIBRACAO = config["modo_calibracao"]
     TOLERANCIA_COR = config["tolerancia_cor"]
+    FATOR_FOCAL_PROJETOR = config["fator_focal_projetor"]
     TIPO_MAPA_INICIAL = config.get("tipo_mapa", TIPO_MAPA_CUBO)
 
     print()
