@@ -169,7 +169,28 @@ PFC-2026/
 
 ## Como Instalar
 
-### 1. Criar e ativar o ambiente virtual
+### Opção A — Instalador automático do Windows (recomendado)
+
+Para usuários finais existe um instalador único e **100% offline**,
+`AR-Sandbox-Setup-v6.0.exe`, que faz tudo sozinho em um Windows limpo:
+instala o Python 3.12, todas as dependências (wheels embutidas), aplica
+os patches do `pykinect2`, instala o Kinect for Windows Runtime v2.0 e
+cria os atalhos "AR Sandbox" na Área de Trabalho e no Menu Iniciar.
+Basta executar o instalador e clicar em Avançar — nenhum outro
+pré-requisito além do próprio Windows.
+
+O instalador é gerado a partir da pasta [`installer/`](installer/) com:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File installer\build_installer.ps1
+```
+
+(ver `installer/README.md` para detalhes). A opção B abaixo cobre a
+instalação manual para desenvolvimento.
+
+### Opção B — Instalação manual
+
+#### 1. Criar e ativar o ambiente virtual
 
 **Windows (PowerShell):**
 ```powershell
@@ -184,7 +205,7 @@ python3 -m venv kinect_env
 source kinect_env/bin/activate
 ```
 
-### 2. Instalar todas as dependências
+#### 2. Instalar todas as dependências
 
 ```bash
 pip install -r requirements.txt
@@ -336,7 +357,7 @@ python -m unittest test_motor_caixao -v
 ---
 ## Solução de Problemas — pykinect2 + Python 3.12
  
-O `pykinect2` foi escrito para Python 2/3.6 e requer correções manuais para funcionar no Python 3.12. Após instalar os pacotes, aplique os patches abaixo nos arquivos em `C:\Python312\Lib\site-packages\pykinect2\`.
+O `pykinect2` foi escrito para Python 2/3.6 e requer correções para funcionar no Python 3.12. Todas elas são aplicadas **automaticamente** pelo script `installer/patch_pykinect2.py` (execute-o com o Python do ambiente onde o pykinect2 está instalado — o instalador automático já faz isso). Para aplicar manualmente, edite os arquivos em `<seu-ambiente>\Lib\site-packages\pykinect2\` conforme abaixo.
  
 ### `PyKinectV2.py` — 3 correções
  
@@ -357,10 +378,12 @@ except ImportError:
 **2. `sizeof(tagSTATSTG)` incorreto no Python 3.12 (linha ~2216)**
  
 ```python
-# DE:
+# DE (cópia do GitHub):
 assert sizeof(tagSTATSTG) == required_size, sizeof(tagSTATSTG)
+# DE (wheel do PyPI):
+assert sizeof(tagSTATSTG) == 72, sizeof(tagSTATSTG)
  
-# PARA:
+# PARA (nos dois casos):
 assert sizeof(tagSTATSTG) == 80, sizeof(tagSTATSTG)
 ```
  

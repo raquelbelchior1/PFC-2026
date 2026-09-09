@@ -27,6 +27,10 @@ MANIFEST
 pip-log.txt
 pip-delete-this-directory.txt
 
+# ---------- Instalador (artefatos gerados pelo build_installer.ps1) ----------
+installer/payload/
+installer/Output/
+
 # ---------- Ambientes virtuais ----------
 kinect_env/
 venv/

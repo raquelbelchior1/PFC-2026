@@ -1,5 +1,12 @@
 # Guia de Instalação para Iniciantes — Caixão de Areia AR Sandbox
 
+> ⚡ **Atalho: existe um instalador automático!** Se você recebeu o arquivo
+> `AR-Sandbox-Setup-v6.0.exe`, **não precisa seguir este guia**: dê dois
+> cliques nele, aceite o pedido de permissão do Windows e aguarde — ele
+> instala sozinho o Python, todas as dependências e o suporte ao Kinect,
+> e cria o atalho **AR Sandbox** na Área de Trabalho. Este guia continua
+> valendo para quem quer instalar tudo manualmente, passo a passo.
+
 Bem-vindo(a)! Este guia foi escrito para quem **nunca abriu um terminal, nunca instalou Python e nunca rodou um programa "de código"** na vida. Vamos com calma, passo a passo. Se em algum ponto algo não bater exatamente com o que você vê na tela, não se preocupe — pule para a seção **"O que deu errado?"** no final, é bem provável que sua dúvida já esteja lá.
 
 > 💡 **Você não precisa ter o sensor Kinect nem uma caixa de areia física para testar o sistema.** Ele tem um "Modo Simulação" completo em que você usa o mouse para cavar e encher areia virtual na tela. É esse modo que este guia usa como objetivo final.
