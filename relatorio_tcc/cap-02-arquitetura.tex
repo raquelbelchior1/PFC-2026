@@ -5,11 +5,12 @@
 \chapter{Arquitetura de Software}
 \label{cap:arquitetura}
 
-Este capítulo descreve a arquitetura do sistema, organizada em quatro
+Este capítulo descreve a arquitetura do sistema, organizada em cinco
 seções: a justificativa do estilo arquitetural adotado
 (Seção~\ref{sec:estilo}), a estrutura de módulos
 (Seção~\ref{sec:modulos}), a máquina de estados que orquestra a execução
-(Seção~\ref{sec:fsm}) e os padrões de projeto aplicados
+(Seção~\ref{sec:fsm}), as saídas visuais apresentadas ao operador
+(Seção~\ref{sec:saidas}) e os padrões de projeto aplicados
 (Seção~\ref{sec:patterns}).
 
 \section{Estilo Arquitetural: Monolítico Modularizado}
@@ -29,11 +30,60 @@ domínio:
     \item[Simplicidade de \textit{deploy}.] Um único ponto de entrada
           (\texttt{main.py}) e um conjunto fixo de dependências
           permitem operação \textit{plug \& play} em qualquer máquina
-          Windows ou Linux com Python e OpenCV instalados.
+          Windows ou Linux com Python e OpenCV instalados — condição
+          explorada ao máximo pelo instalador offline descrito na
+          Seção~\ref{subsec:instalador}.
     \item[Testabilidade.] Cada módulo encapsula uma responsabilidade
           bem definida, permitindo testes unitários isolados sem
           necessidade de \emph{mock} de rede ou \emph{containers}.
 \end{description}
+
+\subsection{Instalador \textit{offline} para Windows}
+\label{subsec:instalador}
+
+A operação em unidades de instrução militar não pode presumir a
+presença de pessoal com formação em desenvolvimento de \textit{software}
+capaz de configurar um ambiente Python do zero, tampouco conectividade
+constante à internet para \texttt{pip install}. Para eliminar essa
+barreira de adoção, o projeto inclui, na pasta \texttt{installer/} do
+repositório (Anexo~A), um instalador único e \textbf{100\% offline}
+para Windows 10/11 de 64~\textit{bits}, gerado com o
+\textit{Inno~Setup} a partir do script \texttt{ARSandbox.iss}. Em uma
+máquina limpa, sem qualquer pré-requisito além do próprio Windows, o
+instalador executa automaticamente, em sequência:
+
+\begin{enumerate}
+    \item Copia o código-fonte, o mapa GeoTIFF de exemplo e a
+          documentação para \texttt{C:\textbackslash ARSandbox};
+    \item Instala o Python~3.12 (reaproveitando uma instalação
+          existente, se houver) e cria um ambiente virtual dedicado;
+    \item Instala todas as dependências (NumPy, OpenCV, \texttt{rasterio},
+          SciPy, CustomTkinter, \texttt{comtypes}, \texttt{pykinect2})
+          a partir de \emph{wheels} pré-baixadas, embutidas no próprio
+          instalador — nenhum acesso à internet é necessário nesta
+          etapa;
+    \item Aplica automaticamente, via \texttt{patch\_pykinect2.py}, os
+          cinco patches de compatibilidade que permitem ao
+          \texttt{pykinect2} — escrito originalmente para Python~2/3.6
+          — funcionar em Python~3.12 (entre eles, a correção de
+          \texttt{sizeof(tagSTATSTG)} e a substituição de
+          \texttt{numpy.distutils}, descontinuado nas versões recentes
+          do NumPy);
+    \item Instala o \textit{Kinect for Windows Runtime v2.0}, necessário
+          para o driver do sensor mesmo fora de um ambiente de
+          desenvolvimento;
+    \item Executa um teste de fumaça dos módulos importados, registrando
+          o resultado em um arquivo de \emph{log}, e cria os atalhos
+          \textbf{AR Sandbox} e \textbf{AR Sandbox --- Diagnóstico do
+          Kinect} no Menu Iniciar.
+\end{enumerate}
+
+\noindent O resultado é que um instrutor da Seção de Simulação da AMAN,
+sem qualquer conhecimento prévio de Python, consegue colocar o sistema
+em operação executando um único instalador e clicando em ``Avançar'' —
+o mesmo princípio de \textit{plug \& play} que orienta a cadeia de
+\textit{fallback} do sensor (Seção~\ref{subsec:fallback}) aplicado,
+aqui, à própria instalação do \textit{software}.
 
 \section{Módulos do Sistema}
 \label{sec:modulos}
@@ -46,7 +96,7 @@ PFC-2026/
 +-- kinect_sensor.py         # Camada de Hardware (KinectSensor)
 +-- motor_caixao_areia.py    # Motor matematico (algebra + grade)
 +-- mde_cartografia.py       # Adaptador de MDE (GeoTIFF + fallback)
-+-- test_motor_caixao.py     # 26 testes unitarios automatizados
++-- test_motor_caixao.py     # 83 testes unitarios automatizados
 +-- DOCUMENTACAO_OFICIAL.md  # Documentacao academica completa
 +-- README.md                # Guia de uso pratico
 +-- relatorio_tcc/           # Esta pasta (relatorio LaTeX do PFC)
@@ -121,11 +171,74 @@ Figura~\ref{fig:fsm} ilustra o diagrama de estados.
           areia virtual (modo simulação).
 \end{description}
 
+\section{Saídas Visuais}
+\label{sec:saidas}
+
+O sistema apresenta ao operador \textbf{duas janelas OpenCV}
+simultâneas, com propósitos distintos e complementares:
+
+\begin{description}
+    \item[\texttt{Projecao\_Areia}.] Destinada ao \textbf{projetor}
+          físico suspenso sobre a mesa: exibe exclusivamente a malha
+          contínua de quadrados coloridos (vermelho/azul/verde) que
+          constitui o \emph{feedback} operacional. Nenhum texto ou
+          elemento de interface é desenhado sobre essa janela durante a
+          operação normal, para não contaminar a projeção sobre a
+          areia.
+    \item[\texttt{Gabarito\_MDE}.] Janela de \textbf{controle do
+          operador}, exibida no monitor do computador (não no
+          projetor). Mostra o \emph{heatmap} do MDE de referência que
+          está sendo replicado, sobreposto a um HUD (\emph{Heads-Up
+          Display}) semitransparente com a legenda de cores, o estado
+          corrente da máquina de estados, o indicador de calibração
+          (pendente, em cache ou recém-calculada) e a taxa de quadros
+          por segundo.
+\end{description}
+
+\begin{figure}[!ht]
+\centering
+\includegraphics[width=0.75\textwidth]{img/gui_configuracao.png}
+\caption{Interface gráfica de configuração inicial (CustomTkinter),
+aba \emph{Calibração}: modo de calibração (tampa/base), distância do
+Kinect à superfície de referência, tolerância de aceitação e o fator
+inicial de zoom do projetor.}
+\label{fig:gui-config}
+\end{figure}
+
+\subsection{Saída temporária de calibração: o tabuleiro quadriculado}
+\label{subsec:saida-tabuleiro}
+
+Durante a etapa \emph{opcional} de calibração empírica do projetor
+(via \texttt{calibrar\_projetor}, Seção~\ref{subsec:calib-empirica-projetor}), a janela
+\texttt{Projecao\_Areia} deixa \textbf{temporariamente} de exibir a
+malha de cores e passa a projetar um \textbf{padrão de tabuleiro de
+xadrez} (\texttt{gerar\_imagem\_tabuleiro}) sobre a superfície de
+referência. Essa saída é usada apenas enquanto dura a rotina de
+calibração: uma câmera captura o tabuleiro projetado, a função
+\texttt{encontrar\_cantos\_tabuleiro} detecta os cantos internos na
+imagem capturada e \texttt{cv2.calibrateCamera} estima, por
+otimização não linear, os parâmetros intrínsecos do projetor a partir
+das correspondências entre cantos conhecidos e cantos detectados. Um
+\textit{trackbar} de ajuste do fator de zoom/\textit{throw ratio}
+(``\texttt{Zoom proj~x100}'') é exibido na janela \texttt{Gabarito\_MDE}
+durante essa etapa, permitindo ao operador corrigir o chute inicial da
+distância focal caso a otimização convirja para um mínimo local
+incorreto. Encerrada a calibração — com sucesso ou por cancelamento —,
+a janela \texttt{Projecao\_Areia} volta a exibir exclusivamente a
+malha de cores. Este é, portanto, um mecanismo de \textbf{depuração e
+calibração assistida}, e não uma saída destinada ao uso operacional
+corrente do sistema; na configuração padrão, o sistema opera com os
+parâmetros de projeção obtidos \emph{analiticamente}
+(Seção~\ref{sec:passo4}), e a rotina de tabuleiro permanece disponível
+como caminho alternativo, já coberto pela suíte de testes
+(Capítulo~\ref{cap:resultados}).
+
 \section{Padrões de Projeto Aplicados}
 \label{sec:patterns}
 
-A Tabela~\ref{tab:patterns} elenca os padrões de projeto adotados
-e seu propósito específico no sistema.
+A Tabela~\ref{tab:patterns} elenca os padrões de projeto de
+Gamma et al.~\cite{gamma1995design} identificados na implementação, e o
+restante desta seção explica o propósito de cada um.
 
 \begin{table}[!ht]
 \centering
@@ -142,6 +255,54 @@ Observer (Callback) & \texttt{main.py}      & Eventos de \emph{mouse} desacoplad
 \bottomrule
 \end{tabular}
 \end{table}
+
+\begin{description}
+    \item[Strategy + \textit{Fallback} (\texttt{KinectSensor}).] Cada
+          backend de captura (PyKinect2, Open3D, \texttt{freenect},
+          simulação) implementa a mesma interface de
+          \texttt{capturar\_nuvem()}, encapsulando um algoritmo de
+          aquisição intercambiável — a essência do padrão
+          \textit{Strategy}. A particularidade deste projeto é compor
+          o \textit{Strategy} com uma \textbf{cadeia de fallback}
+          (Seção~\ref{subsec:fallback}): em vez de o cliente escolher
+          explicitamente a estratégia, o próprio construtor de
+          \texttt{KinectSensor} tenta cada uma em ordem de preferência
+          até que uma tenha sucesso, tornando a seleção do
+          \textit{driver} transparente ao restante do sistema —
+          \texttt{main.py} chama sempre o mesmo método, qualquer que
+          seja o backend efetivamente ativo.
+    \item[Adapter (\texttt{AdaptadorMDE}).] O formato de arquivo
+          GeoTIFF, a biblioteca \texttt{rasterio} e a convenção de
+          eixos cartográficos são detalhes de implementação que o
+          restante do sistema não deveria conhecer. A classe
+          \texttt{AdaptadorMDE} adapta essa interface heterogênea a um
+          único método uniforme, \texttt{obter\_z\_alvo(x, y)}, que
+          devolve a altura de referência em coordenadas físicas da
+          mesa — seja a origem um GeoTIFF real, seja um mapa sintético
+          de \textit{fallback} (Cubo Central ou Morro Gaussiano).
+    \item[\textit{State Machine} (\texttt{main.py}).] A execução é
+          modelada como uma enumeração explícita de estados
+          (Seção~\ref{sec:fsm}) com transições determinísticas
+          disparadas por eventos de teclado. Esse padrão evita a
+          alternativa comum de controlar o fluxo por variáveis
+          \textit{booleanas} soltas (\emph{flags}), que tendem a
+          produzir estados inválidos ou inconsistentes à medida que o
+          programa cresce; aqui, o estado corrente é sempre um único
+          valor da enumeração \texttt{Estado}, tornando impossível,
+          por construção, que o sistema esteja simultaneamente
+          calibrando e em \textit{loop} de Realidade Aumentada.
+    \item[\textit{Observer} via \textit{callback} (\texttt{main.py}).]
+          Os eventos de \emph{mouse} (pressionar, arrastar, soltar os
+          botões) são registrados por \texttt{cv2.setMouseCallback} e
+          notificados de forma assíncrona à função de tratamento, que
+          atualiza o estado persistente da areia virtual
+          (Seção~\ref{sec:emulador}) sem que o \textit{loop} principal
+          precise consultar ativamente (\emph{polling}) a posição do
+          cursor a cada quadro — um desacoplamento típico do padrão
+          \textit{Observer}, aqui implementado pelo mecanismo nativo
+          de \textit{callbacks} do OpenCV em vez de uma hierarquia
+          explícita de classes \textit{Subject}/\textit{Observer}.
+\end{description}
 
 \subsection{Cadeia de \textit{fallback} do sensor}
 \label{subsec:fallback}
@@ -163,8 +324,8 @@ Figura~\ref{fig:fallback} esquematiza a cadeia.
 \label{fig:fallback}
 \end{figure}
 
-A garantia operacional fundamental é que o sistema \textbf{nunca falha
-catastroficamente} por ausência de hardware: o quarto nível
+A garantia operacional fundamental é que o sistema nunca falha
+catastroficamente por ausência de hardware: o quarto nível
 (\textit{Simulação}) é puramente computacional e não depende de
 quaisquer recursos externos. Garantia análoga aplica-se ao
 \texttt{AdaptadorMDE}: na ausência ou falha de leitura do GeoTIFF, é

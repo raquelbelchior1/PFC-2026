@@ -1,0 +1,114 @@
+% =====================================================================
+% cap-01b-trabalhos-relacionados.tex — Capítulo 3: Trabalhos Relacionados
+% =====================================================================
+
+\chapter{Trabalhos Relacionados}
+\label{cap:relacionados}
+
+Este capítulo situa o presente trabalho no panorama de sistemas de
+caixão de areia com realidade aumentada, revisando a origem do
+conceito e sua adoção acadêmica (Seção~\ref{sec:estado-arte}) e
+posicionando explicitamente as contribuições deste PFC frente a esse
+estado da arte (Seção~\ref{sec:posicionamento}). A diversificação de
+sensores de profundidade empregados por essas implementações já foi
+discutida na Seção~\ref{subsec:sensores-alt}.
+
+\section{AR Sandboxes: Estado da Arte e Adoção Acadêmica}
+\label{sec:estado-arte}
+
+O conceito de caixão de areia com realidade aumentada foi consolidado
+pelo projeto \textbf{SARndbox}, desenvolvido por
+Kreylos~\cite{sarndbox} no KeckCAVES da Universidade da Califórnia em
+Davis. Escrito em C\texttt{++}/OpenGL para aproveitar processamento
+gráfico dedicado, o SARndbox captura a superfície da areia com um
+Kinect, projeta escalas hipsométricas e curvas de nível coloridas em
+tempo real e simula, sobre o relevo físico, o escoamento de água por
+um solver de dinâmica de fluidos. Mais de 150 instalações seguindo
+esse modelo foram documentadas em escolas, universidades, museus e
+centros de pesquisa, e a própria página do projeto lista, entre os
+domínios de aplicação já explorados pela comunidade, hidrologia,
+geologia, mineração, planejamento regional e \textbf{operações
+militares}~\cite{sarndbox} — ainda que, na revisão realizada para
+este trabalho, não tenham sido encontradas implementações
+publicamente documentadas que combinem esse último domínio com
+comparação quantitativa a um Modelo Digital de Elevação cartográfico
+oficial, lacuna que motiva a Seção~\ref{sec:posicionamento}.
+
+A validade pedagógica da abordagem foi avaliada empiricamente por
+Woods et al.~\cite{woods2016pilot}, em um estudo piloto que empregou o
+SARndbox em laboratórios introdutórios de Geologia para ensinar
+leitura de mapas topográficos e processos superficiais, relatando
+ganhos observados na capacidade de visualização espacial dos
+estudantes. Esse resultado é relevante para o presente trabalho por
+oferecer evidência prévia, independente e publicada, de que a
+transição cognitiva entre carta topográfica e relevo tridimensional
+tangível — o problema central motivador deste PFC
+(Seção~\ref{sec:contexto}) — é de fato facilitada pela metáfora do
+caixão de areia aumentado, dispensando a necessidade de este trabalho
+revalidar esse pressuposto pedagógico isoladamente.
+
+Mais recentemente, Wellmann et al.~\cite{wellmann2022openarsandbox} propuseram o
+\textbf{Open~AR-Sandbox}, uma reimplementação de código aberto em
+Python voltada à visualização de informação geológica de subsuperfície
+(camadas de litologia, não apenas topografia), com interface
+modularizável para uso em pesquisa e divulgação científica. A escolha
+por Python, em vez do C\texttt{++} nativo do SARndbox, aproxima essa
+implementação do ecossistema científico também adotado neste trabalho
+(NumPy, OpenCV — Seção~\ref{sec:tradeoffs}), reforçando que a
+linguagem não é mais um fator limitante de desempenho para esse tipo
+de aplicação em hardware convencional.
+
+\section{Posicionamento do Presente Trabalho}
+\label{sec:posicionamento}
+
+A Tabela~\ref{tab:relacionados} resume as diferenças entre as
+implementações revisadas e o sistema desenvolvido neste PFC, ao longo
+de quatro eixos de comparação.
+
+\begin{table}[!ht]
+\centering
+\caption{Posicionamento do presente trabalho frente a implementações revisadas.}
+\label{tab:relacionados}
+\small
+\begin{tabularx}{\textwidth}{@{}l X X@{}}
+\toprule
+\textbf{Eixo} & \textbf{SARndbox e variantes revisadas} & \textbf{Este trabalho} \\
+\midrule
+\textit{Feedback} ao operador &
+Curvas de nível, escalas hipsométricas ou camadas geológicas —
+qualitativo, sem alvo externo definido &
+Decisão célula a célula (cavar/preencher/manter) por comparação
+quantitativa com tolerância explícita contra um MDE de referência \\
+\addlinespace
+Resiliência a falta de hardware &
+Não documentada nas publicações revisadas; presume-se sensor e GPU
+dedicada disponíveis &
+Cadeia de \textit{fallback} em quatro níveis
+(Seção~\ref{subsec:fallback}), com simulação interativa completa na
+ausência de qualquer sensor \\
+\addlinespace
+Origem do MDE de referência &
+Nenhuma (SARndbox, Woods et al.) ou dado geológico de subsuperfície
+sem vínculo cartográfico oficial (Open~AR-Sandbox) &
+Arquivo GeoTIFF georreferenciado fornecido pelo operador — compatível
+com produtos oficiais como os do BDGEx (Seção~\ref{sec:mde}) —, com
+\textit{fallback} sintético para demonstração sem conectividade \\
+\addlinespace
+Domínio de aplicação &
+Educação em geociências, hidrologia e divulgação científica &
+Treinamento militar em leitura de carta e planejamento tático, em
+atendimento a uma demanda real da Seção de Simulação da AMAN \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+A contribuição deste trabalho não está, portanto, em propor a técnica
+de caixão de areia com realidade aumentada — consolidada desde o
+SARndbox e validada pedagogicamente por Woods et al.~\cite{woods2016pilot} —,
+mas em preencher as três lacunas já enunciadas na
+Seção~\ref{sec:contexto}: substituir o retorno visual qualitativo por
+uma regra de negócio quantitativa contra um MDE cartográfico oficial,
+tornar explícita a decisão operacional célula a célula, e assegurar
+resiliência operacional total diante da ausência de hardware — nenhuma
+das quais documentada em conjunto nas implementações revisadas neste
+capítulo.

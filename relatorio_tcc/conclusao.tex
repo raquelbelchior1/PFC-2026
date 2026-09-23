@@ -21,9 +21,10 @@ fornecido em formato GeoTIFF, com tolerância vertical explícita; e
 dados cartográficos.
 
 O motor matemático foi desenvolvido sob a metodologia de
-\textit{Test-Driven Development}, resultando em uma suíte com 26
+\textit{Test-Driven Development}, resultando em uma suíte com 83
 testes unitários automatizados que verificam — com valores numéricos
-explícitos e auditáveis — todos os contratos algébricos do sistema.
+explícitos e auditáveis — todos os contratos algébricos do sistema,
+da calibração RANSAC + SVD ao teste de aceitação de ponta a ponta.
 A arquitetura monolítica modularizada, com seus quatro padrões de
 projeto (Strategy + Fallback, Adapter, State Machine, Observer),
 garante simultaneamente a latência mínima necessária para operação
@@ -39,42 +40,70 @@ especializado, demonstrar todo o \textit{pipeline} de forma tangível,
 funcionalidade especialmente valiosa para defesa do projeto e para
 ensino em sala de aula.
 
-Durante a fase de validação, foi identificado e corrigido um defeito
-de calibração que reduzia a área renderizada a uma pequena fração da
-janela de projeção. A correção, formalizada na composição com a
-matriz $T_{\text{shift}}$ e na introdução do filtro de extensão da
-mesa, foi documentada com detalhes no Capítulo~\ref{cap:resultados} e
-está consolidada na versão~3.1 do sistema.
+Durante a fase de validação em campo com o sensor Kinect~v2 real, foi
+identificado e corrigido um defeito de calibração que reduzia a área
+renderizada a uma pequena fração da janela de projeção. A correção,
+formalizada na composição com a matriz $T_{\text{shift}}$ e na
+introdução do filtro de extensão da mesa, foi documentada com
+detalhes no Capítulo~\ref{cap:resultados} e permanece consolidada nas
+versões subsequentes do sistema, que evoluíram a calibração para o
+esquema RANSAC~+~SVD sobre uma superfície de referência (tampa ou
+base vazia) com cota zero fixada na base do caixão.
 
 \section{Atendimento aos Objetivos}
 
 Todos os oito objetivos específicos enunciados no
-Capítulo~\ref{cap:intro} foram plenamente atendidos:
+Capítulo~\ref{cap:intro} foram atendidos:
 
 \begin{enumerate}
     \item Arquitetura de três camadas implementada e documentada;
     \item Cadeia de \textit{fallback} do \texttt{KinectSensor} operacional;
     \item Motor matemático com SVD + Gram-Schmidt + Tsai funcional;
-    \item \texttt{AdaptadorMDE} com leitura GeoTIFF e \emph{fallback} gaussiano;
+    \item \texttt{AdaptadorMDE} implementado, com \emph{fallback} gaussiano
+          validado por teste automatizado; a leitura de GeoTIFF real está
+          implementada e integrada ao restante do \textit{pipeline}, mas
+          — como registrado com transparência na
+          Seção~\ref{sec:tdd} — ainda não possui um caso de teste
+          automatizado dedicado nem foi demonstrada com o arquivo
+          \texttt{25S51\_ZN.tif} versionado no repositório, permanecendo
+          como item de verificação futura (Seção~\ref{sec:trabalhos-futuros});
     \item Discretização em malha com renderização por \texttt{cv2.fillPoly};
     \item Emulador interativo via \texttt{cv2.setMouseCallback};
-    \item Suíte de 26 testes unitários (25 aprovados + 1 ignorado);
+    \item Suíte de 83 testes unitários, todos aprovados;
     \item Documentação tripla (acadêmica, prática e relatório ABNT).
 \end{enumerate}
 
 \section{Trabalhos Futuros}
+\label{sec:trabalhos-futuros}
 
 A continuidade da linha de pesquisa pode explorar, dentre outras, as
 seguintes frentes:
 
 \begin{description}
+    \item[Teste automatizado de leitura de GeoTIFF real.] A suíte atual
+          valida a leitura de MDE apenas contra as superfícies
+          sintéticas Cubo Central e Morro Gaussiano (Seção~\ref{sec:tdd}).
+          Escrever um teste dedicado que carregue o GeoTIFF real já
+          versionado no repositório (\texttt{25S51\_ZN.tif}) e valide a
+          interpolação bilinear contra valores conhecidos da grade
+          fecharia essa lacuna de cobertura.
+    \item[Reconstrução do caixão de teste e nova demonstração física
+          integral.] Corrigir o recorte da estrutura de madeira que
+          hoje tampa parcialmente o campo de visão do sensor
+          (Seção~\ref{subsec:limitacao-fisica}) e repetir o roteiro de
+          aceitação completo com Kinect real, do início ao fim, sem
+          interrupções de conexão.
+    \item[Benchmark de desempenho em modo real.] Medir e reportar a
+          taxa de quadros com o sensor Kinect conectado, de forma
+          independente da medição já feita em modo simulação
+          (Seção~\ref{sec:funcional}).
     \item[Calibração automática do projetor.] A versão atual emprega
           parâmetros de projeção configurados analiticamente. Uma
           calibração genuína do projetor por padrões \textit{Gray code}
           ou tabuleiro de xadrez (já parcialmente suportada pelas
-          funções \texttt{encontrar\_cantos\_tabuleiro} e
-          \texttt{calibrar\_projetor}) eliminaria distorções residuais
-          em montagens não-ideais.
+          funções \texttt{encontrar\_\allowbreak cantos\_\allowbreak
+          tabuleiro} e \texttt{calibrar\_\allowbreak projetor})
+          eliminaria distorções residuais em montagens não-ideais.
     \item[Suporte a múltiplas camadas de visualização.] Sobreposição
           de curvas de nível, escalas batimétricas, isótermas e
           itinerários táticos — todos coerentes com o mesmo MDE de
@@ -104,9 +133,12 @@ seguintes frentes:
 
 A combinação de matemática rigorosa, engenharia de software
 disciplinada e visão clara da aplicação militar produziu um sistema
-que ultrapassa o estado da arte das implementações de
-\textit{AR Sandbox} de finalidade puramente didática ou recreativa.
-A entrega não se limita a um \textit{software} funcional: contempla
+que se diferencia das implementações de caixão de areia com realidade
+aumentada de finalidade puramente didática ou recreativa levantadas na
+revisão de trabalhos relacionados (Capítulo~\ref{cap:relacionados}),
+por incorporar comparação quantitativa contra um MDE de referência,
+tolerância vertical explícita e uma arquitetura de \textit{fallback}
+resiliente. A entrega não se limita a um \textit{software} funcional: contempla
 testes automatizados, documentação acadêmica completa, guia de uso
 prático e este próprio relatório de conformidade ABNT, formando um
 conjunto reproduzível, auditável e diretamente aproveitável pelas

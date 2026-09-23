@@ -136,6 +136,27 @@ abordagem ingênua.
 \section{Emulador Interativo de Areia}
 \label{sec:emulador}
 
+O emulador interativo existe para resolver um problema prático de
+engenharia e de pesquisa: como desenvolver, testar e demonstrar todo o
+\textit{pipeline} de Realidade Aumentada — discretização em malha,
+comparação com o MDE, projeção de Tsai e rasterização — em qualquer
+computador, a qualquer momento, sem depender da disponibilidade
+do sensor Kinect físico? Durante a maior parte do ciclo de
+desenvolvimento deste projeto, o hardware não estava permanentemente
+acessível aos quatro integrantes da equipe, e uma apresentação ou
+depuração que dependesse exclusivamente do sensor conectado seria
+frágil por construção. O emulador resolve isso substituindo a captura
+por hardware por uma matriz de alturas persistente, manipulável em
+tempo real pelo \emph{mouse}, que atravessa exatamente o mesmo código
+de discretização, comparação e projeção usado no modo real — nenhuma
+ramificação condicional separa "modo simulação" de "modo real" a
+jusante da captura. Esse é, ao mesmo tempo, o nível mais profundo da
+\textbf{cadeia de \textit{fallback}} do sistema (ativado quando nenhum
+sensor físico é encontrado) e uma ferramenta deliberada de teste
+independente: a Seção~\ref{subsec:fallback} detalha os quatro níveis
+dessa cadeia e o mecanismo mais amplo de resiliência do qual o
+emulador é a camada final.
+
 \subsection{Estado persistente da areia virtual}
 
 A classe \texttt{KinectSensor}, quando em modo simulação, mantém uma

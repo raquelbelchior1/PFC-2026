@@ -16,23 +16,23 @@ esperado para fins de avaliação.
 \caption{Roteiro de demonstração passo a passo.}
 \label{tab:roteiro}
 \small
-\begin{tabular}{cll}
+\begin{tabularx}{\textwidth}{@{}c X X@{}}
 \toprule
 \textbf{\#} & \textbf{Ação} & \textbf{Resultado esperado} \\
 \midrule
-1  & Executar \texttt{python main.py}             & Abertura das janelas \texttt{Projecao\_Areia} e \texttt{Gabarito\_MDE} \\
-2  & Selecionar mapa GeoTIFF (ou modo demo) na GUI inicial & Mensagem de carregamento bem-sucedido no terminal \\
-3  & Pressionar tecla \texttt{C}                  & Calibração executada (SVD + Gram-Schmidt + $T_{\text{shift}}$) \\
-4  & Observar \texttt{Projecao\_Areia}            & Malha contínua: bordas vermelhas, anel verde, centro azul \\
-5  & Observar \texttt{Gabarito\_MDE}              & Heatmap do Morro Gaussiano (ou GeoTIFF real) de referência \\
-6  & Arrastar botão direito do mouse no centro    & Quadrados centrais transitam de azul $\to$ verde \\
-7  & Arrastar botão esquerdo do mouse nas bordas  & Quadrados das bordas transitam de vermelho $\to$ verde \\
+1  & Executar \texttt{python main.py}             & Abertura da GUI de configuração (CustomTkinter) \\
+2  & Definir dimensões da mesa, modo de calibração (tampa/base) e mapa (GeoTIFF ou demo) & Janelas \texttt{Projecao\_Areia} e \texttt{Gabarito\_MDE} abertas \\
+3  & Pressionar tecla \texttt{C}                  & Calibração executada (RANSAC + SVD + Gram-Schmidt + $T_{\text{shift}}$) \\
+4  & Observar \texttt{Projecao\_Areia}            & Malha contínua: verde fora do cubo, azul no terço central (mapa Cubo Central) \\
+5  & Observar \texttt{Gabarito\_MDE}              & Heatmap do MDE (Cubo Central, Morro Gaussiano ou GeoTIFF real) de referência \\
+6  & Arrastar botão direito do mouse no terço central & Quadrados centrais transitam de azul $\to$ verde \\
+7  & Arrastar botão esquerdo do mouse fora do cubo & Quadrados afetados transitam para azul, e voltam ao verde ao ajustar \\
 8  & Continuar interação                          & Convergência da malha para totalmente verde \\
 9  & Pressionar tecla \texttt{F}                  & Janela \texttt{Projecao\_Areia} entra em modo tela cheia \\
 10 & Pressionar tecla \texttt{C} novamente        & Recalibração bem-sucedida (demonstra robustez) \\
 11 & Pressionar tecla \texttt{Q} ou \texttt{ESC}  & Encerramento limpo, recursos liberados \\
 \bottomrule
-\end{tabular}
+\end{tabularx}
 \end{table}
 
 \noindent
@@ -46,7 +46,8 @@ esperado para fins de avaliação.
           hardware físico;
     \item A recalibração em tempo de execução comprova a robustez do
           mecanismo de \textit{fallback} e a estabilidade numérica do
-          SVD, mesmo após sucessivas modificações na areia virtual;
+          RANSAC seguido de SVD, mesmo após sucessivas modificações na
+          areia virtual;
     \item A taxa de quadros (FPS) exibida no canto superior esquerdo
           da janela de projeção mantém-se consistentemente acima de
           30~fps, validando o requisito de operação em tempo real.
@@ -60,8 +61,9 @@ Para executar a suíte de testes unitários:
 python -m unittest test_motor_caixao -v
 \end{lstlisting}
 
-\noindent Saída esperada: \texttt{25 passed, 1 skipped} (Open3D
-ausente no ambiente de testes).
+\noindent Saída esperada: \texttt{83 passed} (com Open3D instalado; na
+ausência da biblioteca, \texttt{TestLeituraRGBD} é ignorado e a suíte
+reporta \texttt{82 passed, 1 skipped}).
 
 Para forçar o modo simulação mesmo com Kinect conectado, editar no
 topo do arquivo \texttt{main.py}:

@@ -11,16 +11,42 @@ coloridos sobre a areia. Cada uma das quatro etapas é apresentada com
 rigor algébrico e relacionada à sua implementação no módulo
 \texttt{motor\_caixao\_areia.py}.
 
-\section{Passo 1 — Ajuste de Plano por SVD}
+\section{Passo 1 — Ajuste de Plano: RANSAC seguido de SVD}
 \label{sec:passo1}
 
 Dada uma nuvem de $N$ pontos $\{\mathbf{p}_i\}_{i=1}^{N} \subset
-\mathbb{R}^{3}$ capturados pelo Kinect sobre a superfície da mesa, o
-problema é determinar o plano $\Pi: ax + by + cz + d = 0$ que melhor se
-ajusta a esses pontos no sentido dos mínimos quadrados ortogonais.
+\mathbb{R}^{3}$ capturados pelo Kinect sobre a superfície plana de
+referência (a tampa apoiada sobre o caixão, ou a base de madeira vazia),
+o problema é determinar o plano $\Pi: ax + by + cz + d = 0$ que melhor
+se ajusta a essa superfície. O campo de visão do Kinect, contudo, é mais
+largo que a área útil do caixão: a nuvem capturada inclui também a
+moldura de madeira, o piso ao redor e ruído da sala — pontos que não
+pertencem ao plano de referência e que distorceriam um ajuste de
+mínimos quadrados ingênuo. Por isso a calibração oficial
+(\texttt{main.\_executar\_calibracao}) combina dois métodos em
+sequência: primeiro o \textbf{RANSAC} isola o maior subconjunto de
+pontos coplanares (Seção~\ref{subsec:ransac}); em seguida, o
+\textbf{SVD} refina a normal com precisão sub-milimétrica, mas apenas
+sobre esse subconjunto de \emph{inliers}.
 
-A solução clássica procede em três etapas. Primeiro, calcula-se o
-centroide e a matriz centralizada
+\subsection{Isolamento de inliers por RANSAC}
+
+A função \texttt{ajustar\_plano\_ransac()} executa $n_{\text{iter}} =
+1000$ iterações por padrão. A cada iteração, sorteia-se uma trinca de
+pontos, constrói-se o plano candidato que passa por eles e contam-se os
+\emph{inliers}: pontos da nuvem completa cuja distância ao plano
+candidato é inferior a $d_{\text{in}} = 0{,}03$~m (3~cm). O plano
+vencedor é o que acumula o maior número de inliers ao longo das
+iterações. Se a fração de inliers do plano vencedor for inferior a
+$30\,\%$ da nuvem, a função levanta \texttt{RuntimeError} — sintoma de
+que a superfície de referência não domina o campo de visão do sensor
+(tampa mal posicionada, por exemplo).
+
+\subsection{Refinamento por SVD}
+
+A solução clássica de mínimos quadrados procede em três etapas sobre o
+conjunto de inliers identificado pelo RANSAC (e apenas sobre ele).
+Primeiro, calcula-se o centroide e a matriz centralizada
 \begin{equation}
 \bar{\mathbf{p}} = \frac{1}{N} \sum_{i=1}^{N} \mathbf{p}_i,
 \qquad
@@ -47,7 +73,13 @@ direção ao Kinect); caso contrário, $\mathbf{n}$ é negado.
 A função \texttt{ajustar\_plano\_svd()} encapsula esse procedimento e é
 coberta por quatro testes unitários que verificam (i) unicidade da
 normal, (ii) plano horizontal $z = 5$, (iii) plano inclinado e
-(iv) exceção para $N < 3$.
+(iv) exceção para $N < 3$. A função \texttt{ajustar\_plano\_ransac()},
+que aplica o RANSAC descrito acima e delega o refinamento a
+\texttt{ajustar\_plano\_svd()} sobre os inliers, é coberta por cinco
+testes unitários adicionais (classe \texttt{TestRANSAC}), incluindo o
+cenário motivador da especificação — uma nuvem sintética com moldura e
+piso como \textit{outliers} ao redor da tampa — e a verificação de que
+o refinamento final usa exclusivamente os inliers selecionados.
 
 \section{Passo 2 — Construção da Base da Mesa}
 \label{sec:passo2}
@@ -101,44 +133,65 @@ transformada $z_{\text{mesa}} = 0$ — isto é, o plano da mesa torna-se o
 plano $XY$ do novo sistema. Essa invariante é verificada pelo teste
 \texttt{TestMatrizTransformacao}.
 
-\subsection{Composição com $T_{\text{shift}}$ — alinhamento ao centro lógico}
+\subsection{Composição com $T_{\text{shift}}$ — centro lógico e cota zero na base}
 \label{subsec:T-shift}
 
-A matriz $T$ acima leva o centroide $\bar{\mathbf{p}}$ à \emph{origem}
-$(0, 0, 0)$. Entretanto, a convenção interna de discretização e
-renderização (Capítulo~\ref{cap:rendering}) adota a mesa como o domínio
-$[0, L_x] \times [0, L_y]$, com a origem em um \emph{canto}. Sem ajuste,
-metade dos pontos da nuvem (aqueles com $x < 0$ ou $y < 0$) seria
-projetada fora do domínio e \emph{colapsada pelo \texttt{clip}} nas
-células de borda da grade — um defeito observado em testes preliminares
-de campo, no qual a projeção AR exibia apenas um pequeno retângulo
-correspondente ao quadrante positivo.
+A matriz $T$ acima leva o centroide $\bar{\mathbf{p}}$ do plano
+detectado à \emph{origem} $(0, 0, 0)$. Entretanto, a convenção interna
+de discretização e renderização (Capítulo~\ref{cap:rendering}) adota a
+mesa como o domínio $[0, L_x] \times [0, L_y] \times [0, h_{\max}]$, com
+a origem $XY$ em um \emph{canto} e a cota $Z = 0$ fixada na \textbf{base
+de madeira} do caixão (alturas de areia sempre positivas, crescendo
+para cima). Sem ajuste em $XY$, metade dos pontos da nuvem (aqueles com
+$x < 0$ ou $y < 0$) seria projetada fora do domínio e \emph{colapsada
+pelo \texttt{clip}} nas células de borda da grade — um defeito
+observado em ensaio preliminar de campo, no qual a projeção exibia
+apenas um pequeno retângulo correspondente ao quadrante positivo. E sem
+ajuste em $Z$, a cota zero coincidiria com o \emph{plano de calibração}
+em vez da base do caixão — o que é apenas correto quando esse plano é a
+própria base (modo \textbf{base vazia}), mas não quando ele é a tampa
+apoiada $h_{\max}$ acima dela (modo \textbf{tampa}, oficial).
 
 A solução, identificada e corrigida durante a fase de validação, é
-compor $T$ com uma translação fixa que desloca o centroide para o
-centro lógico da mesa:
+compor $T$ com uma translação $T_{\text{shift}}$ que (i) desloca o
+centroide para o centro lógico da mesa em $XY$ e (ii) desce a origem em
+$Z$ até a base do caixão sempre que o plano de calibração for a tampa:
 \begin{equation}
 \label{eq:T-shift}
 T_{\text{shift}} =
 \begin{bmatrix}
 1 & 0 & 0 & L_x / 2 \\
 0 & 1 & 0 & L_y / 2 \\
-0 & 0 & 1 & 0 \\
+0 & 0 & 1 & \delta_{\text{tampa}} \, h_{\max} \\
 0 & 0 & 0 & 1
 \end{bmatrix},
 \qquad
-T_{\text{final}} = T_{\text{shift}} \cdot T.
+T_{\text{final}} = T_{\text{shift}} \cdot T,
 \end{equation}
 
-\noindent Após essa composição, o ponto físico que se encontra
-exatamente sob o sensor (centroide do plano detectado) cai em
-$(L_x/2, L_y/2)$, e a nuvem ocupa naturalmente $[0, L_x] \times [0,
-L_y]$. Adicionalmente, a função
-\texttt{discretizar\_nuvem\_em\_grade()} aplica um filtro
-\textit{\textbf{dentro}} que descarta pontos cujas coordenadas
-extrapolem o domínio físico da mesa, o que é típico do campo de visão
-do Kinect montado a 2,5~m (FOV horizontal de aproximadamente 70°
-cobre uma área maior do que a mesa).
+\noindent onde $\delta_{\text{tampa}} = 1$ no modo tampa e
+$\delta_{\text{tampa}} = 0$ no modo base vazia. Após essa composição, o
+ponto físico que se encontra exatamente sob o sensor (centroide do
+plano detectado) cai em $(L_x/2,\, L_y/2,\, \delta_{\text{tampa}}
+h_{\max})$: no modo tampa, na cota $h_{\max}$ (o topo do caixão); no
+modo base, na cota $0$ (o fundo, que \emph{é} o próprio plano de
+calibração). Em ambos os casos, a nuvem ocupa naturalmente $[0, L_x]
+\times [0, L_y]$ em $XY$ e a base de madeira corresponde sempre a
+$Z_{\text{mesa}} = 0$, independentemente do modo de calibração
+escolhido. Adicionalmente, a função \texttt{discretizar\_nuvem\_em\_grade()}
+aplica um filtro \textit{\textbf{dentro}} que descarta pontos cujas
+coordenadas $XY$ extrapolem o domínio físico da mesa, o que é típico do
+campo de visão do Kinect montado a 2,5~m (FOV horizontal de
+aproximadamente 70° cobre uma área maior do que a mesa).
+
+Como \textbf{validação de sanidade}, antes de compor $T_{\text{shift}}$
+o sistema compara a distância medida sensor–plano ($-\bar{p}_z$, uma
+vez que $Z$ cresce em direção ao sensor no referencial original) com a
+distância informada pelo operador na interface gráfica — a distância ao
+plano da tampa no modo tampa, ou essa mesma distância somada a
+$h_{\max}$ no modo base. Divergências acima de 15~cm abortam a
+calibração com uma mensagem diagnóstica, protegendo contra tampa mal
+posicionada ou erro de digitação nos campos físicos da mesa.
 
 \section{Passo 4 — Projeção 3D$\to$2D pelo Modelo de Tsai}
 \label{sec:passo4}
@@ -171,31 +224,99 @@ u = \frac{W}{L_x} \, x, \qquad v = \frac{H}{L_y} \, y,
 \noindent o que é precisamente o mapeamento desejado de
 $[0, L_x] \times [0, L_y]$ para $[0, W] \times [0, H]$. Essa parametrização
 é compartilhada pelos dois modos de operação, o que simplifica a
-calibração e elimina assimetrias entre simulação e hardware real.
+calibração e elimina assimetrias entre simulação e hardware real. Como
+o projetor é montado fisicamente alinhado — apontando reto para baixo,
+centrado sobre a mesa —, esses parâmetros podem ser deduzidos
+analiticamente, sem necessidade de um procedimento de estimação
+experimental.
 
-\section{Discussão — Por que SVD e não RANSAC?}
+\subsection{Calibração empírica alternativa do projetor (tabuleiro de xadrez)}
+\label{subsec:calib-empirica-projetor}
+
+Caso a premissa de alinhamento físico não se sustente — projetor
+montado com alguma inclinação residual, por exemplo —, o sistema
+disponibiliza um caminho alternativo de \textbf{estimação empírica} dos
+parâmetros de Tsai, no qual a etapa de otimização que o artigo original
+de Tsai~\cite{tsai1987versatile} descreve é de fato executada. A
+função \texttt{gerar\_imagem\_tabuleiro()} produz um padrão de
+tabuleiro de xadrez com cantos internos em coordenadas conhecidas do
+projetor; essa imagem é projetada \textbf{temporariamente} na janela
+\texttt{Projecao\_Areia} sobre a superfície de referência ainda no
+lugar (Seção~\ref{sec:saidas}). Uma câmera RGB captura o tabuleiro
+projetado; \texttt{encontrar\_cantos\_tabuleiro()} localiza os cantos
+na imagem capturada via \texttt{cv2.findChessboardCorners}; e
+\texttt{cantos\_rgb\_para\_pontos\_mesa()} converte cada canto para uma
+coordenada 3D no referencial da mesa, por \textit{back-projection}
+(Equação~\eqref{eq:backproj}) seguida de $T_{\text{final}}$. Com as
+correspondências 3D~$\leftrightarrow$~2D resultantes,
+\texttt{calibrar\_projetor()} invoca \texttt{cv2.calibrateCamera} para
+estimar $f_x, f_y, c_x, c_y$ e os coeficientes de distorção por
+otimização não linear, a partir de um chute inicial de focal
+configurável (fator ``\textit{throw ratio}'', padrão $1{,}2 \times$ a
+largura do projetor em pixels — exposto ao operador por um controle
+deslizante na GUI e por um \textit{trackbar} na janela
+\texttt{Gabarito\_MDE} durante a calibração, permitindo corrigi-lo caso
+a otimização convirja para um mínimo local incorreto). Esse caminho
+alternativo é exercitado pelas classes de teste
+\texttt{TestCalibracaoProjetorOpenCV}, \texttt{TestGeracaoTabuleiro},
+\texttt{TestCantosParaPontosMesa} e
+\texttt{TestPipelineCalibracaoProjetor} (Capítulo~\ref{cap:resultados}),
+mas permanece \textbf{inativo por padrão}: a configuração corrente do
+sistema opera com os parâmetros analíticos da
+Equação~\eqref{eq:fxfy-virtual}, reservando a rotina empírica para o
+cenário de montagem não idealizada.
+
+\section{Discussão — RANSAC e SVD: uma composição deliberada}
 \label{sec:discussao-svd}
 
-Uma alternativa frequentemente empregada para o ajuste de plano é o
-algoritmo \textit{RANSAC}~\cite{fischler1981random}, robusto a
-\textit{outliers} mas computacionalmente mais oneroso. A escolha por
-SVD neste trabalho é justificada pelos seguintes argumentos:
+Uma versão anterior deste trabalho empregava SVD puro, sem RANSAC, para
+o ajuste de plano, sob a premissa de que a nuvem de calibração seria
+capturada já livre de \textit{outliers}. A experimentação em
+campo mostrou que essa premissa não se sustenta: o campo de visão do
+Kinect~v2 é mais largo que a área útil do caixão de areia, de modo que
+qualquer captura da superfície de referência inclui também a moldura de
+madeira do caixão, o piso ao redor e ruído da sala. Um SVD aplicado
+ingenuamente sobre a nuvem inteira minimiza a soma dos quadrados das
+distâncias de \emph{todos} os pontos, inclusive desses outliers, o que
+distorce sistematicamente a normal calculada. A solução adotada — e
+validada nos ensaios de campo relatados no
+Capítulo~\ref{cap:resultados} — não é substituir o SVD pelo RANSAC, mas
+\textbf{compor os dois}, cada um explorando a etapa em que é mais forte:
 
 \begin{itemize}
-    \item A nuvem de calibração é capturada com a areia previamente
-          \emph{nivelada} (ou diretamente sobre o piso, em ensaio
-          preliminar), o que minimiza a presença de \textit{outliers};
-    \item O sensor Kinect~v2 possui ruído gaussiano de baixa magnitude
-          ($\sigma \approx 3$~mm), bem modelado pela hipótese subjacente
-          ao SVD;
-    \item A complexidade do SVD ($O(N \cdot \min(N,3)^2) = O(N)$ para
-          $N \gg 3$) é determinística, ao contrário das iterações
-          aleatórias do RANSAC;
+    \item O \textbf{RANSAC} (Seção~\ref{subsec:ransac}) é robusto a
+          \textit{outliers} por construção: ele isola o maior
+          subconjunto de pontos coplanares antes de qualquer ajuste
+          numérico, funcionando mesmo com até $70\,\%$ da nuvem
+          ocupada por pontos que não pertencem ao plano de referência
+          (limite imposto por \texttt{min\_inliers\_ratio}~$= 0{,}3$);
+    \item O \textbf{SVD}, aplicado apenas sobre os inliers
+          selecionados pelo RANSAC, produz o estimador de mínimos
+          quadrados \emph{ótimo} para esse subconjunto — mais preciso
+          do que o plano obtido a partir de apenas três pontos
+          amostrados em uma única iteração do RANSAC;
     \item A solução SVD é \emph{única} (a menos do sinal da normal,
           tratado por convenção), o que facilita a verificação por
-          testes unitários com valores esperados \emph{hardcoded}.
+          testes unitários com valores esperados \emph{hardcoded}
+          sobre nuvens sintéticas 100\,\% coplanares — cenário em que
+          o parâmetro \texttt{usar\_ransac=False} permanece disponível
+          e suficiente, dispensando o custo das iterações RANSAC;
+    \item Em contrapartida, o SVD isolado seria \emph{insuficiente}
+          para o cenário real da tampa: sem a etapa de RANSAC, a
+          normal calculada é sistematicamente puxada na direção dos
+          outliers, produzindo o mesmo artefato de projeção deslocada
+          relatado nos ensaios preliminares de campo
+          (Seção~\ref{subsec:T-shift}).
 \end{itemize}
 
-\noindent Essa decisão é validada empiricamente: os 26 testes unitários
-do motor matemático passam consistentemente com as constantes
-algébricas explicitadas na suíte.
+\noindent A escolha entre os dois regimes é, portanto, guiada pela
+origem dos dados: SVD puro para nuvens sintéticas já garantidamente
+coplanares (a maioria dos testes unitários do motor matemático); RANSAC
+seguido de SVD para qualquer nuvem capturada por hardware real, na qual
+a presença de outliers geométricos é a regra, não a exceção.
+
+\noindent Essa decisão é validada empiricamente: a suíte de 83 testes
+unitários do motor matemático passa integralmente, incluindo os cinco
+casos dedicados especificamente ao RANSAC (\texttt{TestRANSAC}) e os
+oito casos da calibração pela tampa (\texttt{TestCalibracaoTampa}), com
+as constantes algébricas explicitadas na própria suíte.

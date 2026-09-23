@@ -25,8 +25,8 @@ considerável esforço mental e tempo de instrução. Erros de interpretação
 das curvas de nível resultam em terrenos modelados que divergem da
 realidade cartográfica, comprometendo a fidelidade do exercício.
 
-Os \textbf{Caixões de Areia com Realidade Aumentada}
-(\textit{Augmented Reality Sandboxes} — AR Sandboxes) emergiram, na última
+Os \textbf{caixões de areia com realidade aumentada} — na literatura
+internacional, \textit{Augmented Reality Sandboxes} — emergiram, na última
 década, como uma resposta tecnológica a esse problema. Por meio da
 combinação de um \textbf{sensor de profundidade} (tipicamente o
 \textit{Microsoft Kinect}) com um \textbf{projetor multimídia} suspenso
@@ -40,7 +40,12 @@ mental das curvas de nível.
 A iniciativa pioneira do projeto \textit{SARndbox}, da Universidade da
 Califórnia em Davis~\cite{sarndbox}, demonstrou a viabilidade técnica da
 abordagem. Adaptações posteriores expandiram o conceito para a educação
-em geociências, hidrologia e cartografia. No contexto militar, entretanto,
+em geociências, hidrologia e cartografia. Neste trabalho, por sugestão da
+orientação, evita-se o uso do anglicismo como apelido do sistema
+desenvolvido, preferindo-se, ao longo de todo o texto, a denominação em
+língua portuguesa \emph{caixão de areia com realidade aumentada}.
+
+No contexto militar, entretanto,
 três limitações dos sistemas existentes restringem sua adoção:
 
 \begin{enumerate}
@@ -55,6 +60,23 @@ três limitações dos sistemas existentes restringem sua adoção:
           terreno provoca o encerramento abrupto do programa,
           comprometendo apresentações didáticas e demonstrações.
 \end{enumerate}
+
+Este trabalho tem origem em uma demanda operacional concreta: a
+\textbf{Seção de Simulação da Academia Militar das Agulhas Negras (AMAN)}
+mantém, em sua \textbf{Área de Emissão de Ordens Tecnológicas}, um caixão
+de areia físico empregado rotineiramente na instrução de leitura de carta
+topográfica, no planejamento de operações e em exercícios de Comando e
+Estado-Maior. Nesse ambiente, o relevo é modelado manualmente pelos
+instruendos a partir de cartas em papel, e a aderência do terreno
+resultante à cartografia oficial é verificada apenas visualmente pelo
+instrutor, sem qualquer retorno quantitativo durante a modelagem. A
+Seção de Simulação identificou nesse processo uma oportunidade de
+modernização: dotar o caixão de areia já existente de um mecanismo de
+\emph{feedback} automático, capaz de comparar o relevo modelado com um
+Modelo Digital de Elevação de referência sem substituir a mesa física
+nem alterar a rotina de instrução já consolidada. Esse é o contexto
+institucional que orienta os requisitos e as decisões de projeto
+apresentadas neste documento.
 
 \section{Definição do Problema}
 \label{sec:problema}
@@ -80,7 +102,7 @@ sensor de profundidade ou do arquivo de terreno?''
 \label{subsec:obj-geral}
 
 Desenvolver um sistema funcional de Caixão de Areia com Realidade
-Aumentada (AR Sandbox) que projete sobre uma caixa física de areia uma
+Aumentada que projete sobre uma caixa física de areia uma
 \textbf{malha discretizada de quadrados coloridos} comparando, célula a
 célula, o relevo medido pelo sensor Kinect com o relevo de referência
 extraído de um arquivo GeoTIFF, e que opere em modalidade \emph{plug \&
@@ -139,17 +161,14 @@ em horas de instrução e em qualidade do treinamento.
 \section{Organização do Documento}
 \label{sec:organizacao}
 
-O restante deste documento está organizado da seguinte forma. O
-Capítulo~\ref{cap:fundamentacao} apresenta a fundamentação teórica
-necessária para a compreensão do sistema, abrangendo o sensor Kinect,
-o modelo de câmera \textit{pinhole}, álgebra linear computacional e
-Modelos Digitais de Elevação. O Capítulo~\ref{cap:arquitetura} descreve
-a arquitetura de software e os padrões de projeto adotados. O
-Capítulo~\ref{cap:motor} formaliza, com rigor matemático, todo o
-\textit{pipeline} de processamento. O Capítulo~\ref{cap:rendering}
-detalha a estratégia de renderização por malha discretizada e o
-emulador interativo. O Capítulo~\ref{cap:resultados} apresenta os
-resultados experimentais, a estratégia de testes e a discussão de
-\emph{trade-offs}. Finalmente, a Conclusão sintetiza as contribuições e
-aponta os trabalhos futuros. O Apêndice~A contém o roteiro de
-demonstração utilizado na defesa do PFC.
+Os capítulos seguintes acompanham o próprio \textit{pipeline} do
+sistema: da teoria (Capítulo~\ref{cap:fundamentacao}), passando pelo
+posicionamento deste trabalho frente a implementações correlatas
+(Capítulo~\ref{cap:relacionados}), e da arquitetura
+de \textit{software} (Capítulo~\ref{cap:arquitetura}) à formalização
+matemática da calibração e da projeção (Capítulo~\ref{cap:motor}), à
+renderização e ao emulador interativo (Capítulo~\ref{cap:rendering}) e,
+por fim, aos resultados experimentais e à conclusão. O sumário e a
+lista de figuras, nas páginas pré-textuais, detalham a numeração
+completa de seções; o Apêndice~A reúne o roteiro de demonstração
+utilizado na defesa do PFC.
