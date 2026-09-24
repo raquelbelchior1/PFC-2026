@@ -3,7 +3,7 @@
 ![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue?logo=python&logoColor=white)
 ![OpenCV](https://img.shields.io/badge/OpenCV-4.x-green?logo=opencv&logoColor=white)
 ![NumPy](https://img.shields.io/badge/NumPy-1.26.4-013243?logo=numpy&logoColor=white)
-![Testes](https://img.shields.io/badge/Testes_Unitários-59_passing-brightgreen)
+![Testes](https://img.shields.io/badge/Testes_Unitários-88_passing-brightgreen)
 ![Licença](https://img.shields.io/badge/Licença-Acadêmica-lightgrey)
 
 **Projeto Final de Curso (PFC) — Engenharia de Computação & Engenharia Eletrônica & Engenharia Cartográfica**  
@@ -159,7 +159,7 @@ PFC-2026/
 ├── mde_cartografia.py         # AdaptadorMDE: GeoTIFF + fallback Cubo Central + heatmap
 ├── calibration_data.json      # Cache da matriz T_final (gerado após a 1ª calibração — não versionado)
 │
-├── test_motor_caixao.py       # 68 testes unitários automatizados (inclui o teste de aceitação)
+├── test_motor_caixao.py       # 88 testes unitários automatizados (inclui o teste de aceitação e o erro quantitativo do MDE)
 ├── requirements.txt           # Dependências Python (pip install -r requirements.txt)
 ├── DOCUMENTACAO_OFICIAL.md    # Documentação acadêmica completa para a banca
 └── README.md                  # Este arquivo
@@ -326,11 +326,12 @@ Raio de ação: **5 cm** ao redor do cursor, tanto para cavar quanto para preenc
 
 ## Testes Unitários
 
-68 testes automatizados cobrindo todo o motor matemático, os mapas sintéticos e o teste de aceitação oficial:
+88 testes automatizados cobrindo todo o motor matemático, os mapas sintéticos, o teste de aceitação oficial e o erro quantitativo do modelo de elevação:
 
 ```bash
 python -m unittest test_motor_caixao -v
-# Resultado: 67 passed, 1 skipped (Open3D não instalado)
+# Resultado: 88 passed (ambiente com Open3D instalado)
+# Sem Open3D, TestLeituraRGBD é ignorado automaticamente: 87 passed, 1 skipped
 ```
 
 | Classe | Testes | Componente |
@@ -353,6 +354,7 @@ python -m unittest test_motor_caixao -v
 | `TestDiscretizacaoGradeNegativa` | 1 | Agregação por célula (robusta a Z de qualquer sinal) |
 | `TestRenderizacaoGrade` | 2 | Pipeline completo grade→cor→Tsai→fillPoly |
 | `TestFluxoAceitacao` | 1 | **Requisito 4 ponta a ponta**: caixa vazia → calibração com tampa → base VERDE, centro AZUL → cubo físico de 10 cm → topo VERDE |
+| `TestErroQuantitativoElevacao` | 5 | Erro numérico (RMSE/MAE) do MDE medido antes da coloração, com os intrínsecos reais do Kinect v2 — medição de referência, 3 controles negativos (calibração ausente, deslocamento de cota zero ausente, mapa alvo errado) e varredura de resolução da grade |
 
 ---
 ## Solução de Problemas — pykinect2 + Python 3.12
@@ -440,6 +442,7 @@ python diagnostico_kinect.py                              # todos os 6 passos �
 
 | Versão | Data | Mudança |
 |---|---|---|
+| **6.1** | Setembro/2026 | **Erro quantitativo do MDE com intrínsecos reais do Kinect** — nova classe `TestErroQuantitativoElevacao` mede o erro numérico (RMSE/MAE) entre o modelo de elevação medido pela cadeia captura→transformação→grade e o MDE alvo, **antes** da conversão categórica em cor — complementando `TestFluxoAceitacao`, que só valida vermelho/azul/verde. A nuvem sintética usada passou a reproduzir os intrínsecos reais do sensor (resolução $512 \times 424$, $f_x=f_y=367{,}35$, $(c_x,c_y)=(260{,}00,\,205{,}00)$) em vez de um substituto simplificado. Além da medição de referência, a classe inclui **3 controles negativos** (calibração ausente, deslocamento de cota zero ausente, mapa alvo trocado) que confirmam que a métrica de fato denuncia essas falhas, e uma **varredura de resolução da grade** que caracteriza empiricamente — em vez de presumir — como o erro varia com `N_CELULAS`. Suíte expandida de 83 para **88 testes**. O relatório do TCC também passou a documentar os parâmetros intrínsecos do projetor (câmera virtual), antes descritos só simbolicamente. |
 | **6.0** | Agosto/2026 | **Cota zero na BASE + volumes positivos + calibração guiada em cm** — inversão da convenção de Z: a cota zero passou da tampa para a **base de madeira vazia**, com alturas **positivas para cima** ($Z_{mesa} \in [0, +0{,}20]$ m). Os mapas de demonstração viraram **volumes positivos** (Cubo Central: bloco a **+0,10 m** acima da base; Morro Gaussiano: pico **+0,20 m**; GeoTIFF normalizado para $[0, +prof]$) — corrigindo o defeito do "cubo renderizado como buraco". Calibração ganhou **dois modos** (tampa sobre as bordas — oficial — ou base vazia), **validação de sanidade** da distância sensor→plano contra o valor da GUI, passo a passo **on-screen** no estado IDLE, e o novo estado **REMOVER_TAMPA** ("retire a tampa e pressione ESPAÇO"). `calibration_data.json` migrou para o **esquema v2** (versão + modo + equação do plano RANSAC $ax+by+cz+d=0$); caches antigos são descartados automaticamente. GUI reorganizada em 4 abas com **todos os campos físicos em centímetros** e rótulos descritivos (ex.: "Distância do Kinect até a Tampa de Calibração (cm)"); perfis antigos em metros são convertidos ao carregar. Grade de simulação passa a nascer **vazia** ($Z=0$) e a faixa de captura do sensor é derivada da distância informada (fim do `alcance_max=4,5 m` fixo). Legenda do HUD em português orientado à ação (CAVE / PREENCHA / OK). Suíte expandida de 59 para **68 testes**, incluindo `TestFluxoAceitacao` — o teste de aceitação oficial (caixa vazia → base VERDE, centro AZUL → cubo físico de 10 cm → topo VERDE) executado ponta a ponta. |
 | **5.0** | Julho/2026 | **RANSAC obrigatório na calibração da tampa + HUD on-screen** — o FOV do Kinect é mais largo que o caixão (captura moldura de madeira, piso e ruído da sala), então a calibração oficial (`main._executar_calibracao`) passou a rodar **RANSAC** (1000 iterações, limiar de inlier 3 cm — `RANSAC_N_ITER`/`RANSAC_LIMIAR_DIST`) antes do refinamento por SVD, substituindo o SVD puro da versão 4.0. `pipeline_plano_e_base()` passou a repassar `n_iter`/`limiar_dist`/`min_inliers_ratio` para `ajustar_plano_ransac()`. Adicionada legenda visual (HUD) desenhada diretamente sobre a janela de projeção (`main._desenhar_legenda_hud`): overlay semi-transparente com as cores Vermelho/Azul/Verde, seus significados, e o estado atual do sistema (calibração pendente/cache/manual, pá virtual ativa). Raio da pá virtual corrigido para 5 cm (era 10 cm na documentação, já era 5 cm no código). Corrigido `UnicodeEncodeError` em consoles Windows cp1252 ao imprimir símbolos matemáticos (∈, →) — `sys.stdout.reconfigure(encoding="utf-8")` aplicado em `main.py`, `kinect_sensor.py` e `mde_cartografia.py`. `requirements.txt` relaxado para pisos mínimos (`>=`) em pacotes sem exigência de compatibilidade binária, e adicionada a dependência `scipy` (usada por `AdaptadorMDE` mas ausente do arquivo). Suíte de testes expandida de 53 para 59 casos (`TestRANSAC` + teste de calibração RANSAC com outliers). |
 | **4.0** | Julho/2026 | **Calibração da Tampa + convenção Z negativa** — nova metodologia de calibração oficial: a mesa é calibrada **uma única vez** com uma tampa lisa e plana cobrindo todo o caixão (plano de referência $Z_{mesa}=0$), usando **SVD puro** (sem RANSAC, já que a tampa não tem outliers). A matriz $T_{final}$ é persistida em `calibration_data.json` e carregada automaticamente nas execuções seguintes (`salvar_matriz_calibracao`/`carregar_matriz_calibracao`). A areia passa a ocupar a faixa **negativa** $Z_{mesa} \in [-0{,}20, 0{,}0]$ m (fundo → tampa) em vez de $[0, 0{,}30]$ m — corrigido também um bug de convenção de sinal na back-projection pinhole (`profundidade_para_nuvem_mesa`, nova função pura em `motor_caixao_areia.py`), que sem a correção produziria Z positivo para a areia real. O Morro Gaussiano sintético foi substituído pelo **Cubo Central** (`altura_cubo_central`, `mde_cartografia.py`): platô de 50×50 cm a -0,10 m sobre um fundo a -0,20 m, mais fácil de reproduzir fisicamente para testes com a banca. Adicionada classificação de cor vetorizada (`cor_por_diferenca_vetorizado`) e consulta MDE vetorizada (`AdaptadorMDE.obter_z_alvo_array`), usadas por `gerar_imagem_grade_cores` para evitar o laço Python célula-a-célula. Suíte de testes expandida de 26 para 53 casos. |
