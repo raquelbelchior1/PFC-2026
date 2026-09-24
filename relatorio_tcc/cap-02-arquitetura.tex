@@ -48,7 +48,7 @@ constante à internet para \texttt{pip install}. Para eliminar essa
 barreira de adoção, o projeto inclui, na pasta \texttt{installer/} do
 repositório (Anexo~A), um instalador único e \textbf{100\% offline}
 para Windows 10/11 de 64~\textit{bits}, gerado com o
-\textit{Inno~Setup} a partir do script \texttt{ARSandbox.iss}. Em uma
+Inno~Setup a partir do script \texttt{ARSandbox.iss}. Em uma
 máquina limpa, sem qualquer pré-requisito além do próprio Windows, o
 instalador executa automaticamente, em sequência:
 
@@ -69,7 +69,7 @@ instalador executa automaticamente, em sequência:
           \texttt{sizeof(tagSTATSTG)} e a substituição de
           \texttt{numpy.distutils}, descontinuado nas versões recentes
           do NumPy);
-    \item Instala o \textit{Kinect for Windows Runtime v2.0}, necessário
+    \item Instala o Kinect for Windows Runtime v2.0, necessário
           para o driver do sensor mesmo fora de um ambiente de
           desenvolvimento;
     \item Executa um teste de fumaça dos módulos importados, registrando
@@ -199,7 +199,7 @@ simultâneas, com propósitos distintos e complementares:
 \centering
 \includegraphics[width=0.75\textwidth]{img/gui_configuracao.png}
 \caption{Interface gráfica de configuração inicial (CustomTkinter),
-aba \emph{Calibração}: modo de calibração (tampa/base), distância do
+aba ``Calibração'': modo de calibração (tampa/base), distância do
 Kinect à superfície de referência, tolerância de aceitação e o fator
 inicial de zoom do projetor.}
 \label{fig:gui-config}
@@ -208,7 +208,7 @@ inicial de zoom do projetor.}
 \subsection{Saída temporária de calibração: o tabuleiro quadriculado}
 \label{subsec:saida-tabuleiro}
 
-Durante a etapa \emph{opcional} de calibração empírica do projetor
+Durante a etapa opcional de calibração empírica do projetor
 (via \texttt{calibrar\_projetor}, Seção~\ref{subsec:calib-empirica-projetor}), a janela
 \texttt{Projecao\_Areia} deixa \textbf{temporariamente} de exibir a
 malha de cores e passa a projetar um \textbf{padrão de tabuleiro de
@@ -228,7 +228,7 @@ a janela \texttt{Projecao\_Areia} volta a exibir exclusivamente a
 malha de cores. Este é, portanto, um mecanismo de \textbf{depuração e
 calibração assistida}, e não uma saída destinada ao uso operacional
 corrente do sistema; na configuração padrão, o sistema opera com os
-parâmetros de projeção obtidos \emph{analiticamente}
+parâmetros de projeção obtidos analiticamente
 (Seção~\ref{sec:passo4}), e a rotina de tabuleiro permanece disponível
 como caminho alternativo, já coberto pela suíte de testes
 (Capítulo~\ref{cap:resultados}).
@@ -237,7 +237,7 @@ como caminho alternativo, já coberto pela suíte de testes
 \label{sec:patterns}
 
 A Tabela~\ref{tab:patterns} elenca os padrões de projeto de
-Gamma et al.~\cite{gamma1995design} identificados na implementação, e o
+Gamma et al.~\citeonline{gamma1995design} identificados na implementação, e o
 restante desta seção explica o propósito de cada um.
 
 \begin{table}[!ht]
@@ -285,7 +285,7 @@ Observer (Callback) & \texttt{main.py}      & Eventos de \emph{mouse} desacoplad
           (Seção~\ref{sec:fsm}) com transições determinísticas
           disparadas por eventos de teclado. Esse padrão evita a
           alternativa comum de controlar o fluxo por variáveis
-          \textit{booleanas} soltas (\emph{flags}), que tendem a
+          booleanas soltas (\emph{flags}), que tendem a
           produzir estados inválidos ou inconsistentes à medida que o
           programa cresce; aqui, o estado corrente é sempre um único
           valor da enumeração \texttt{Estado}, tornando impossível,
@@ -326,7 +326,7 @@ Figura~\ref{fig:fallback} esquematiza a cadeia.
 
 A garantia operacional fundamental é que o sistema nunca falha
 catastroficamente por ausência de hardware: o quarto nível
-(\textit{Simulação}) é puramente computacional e não depende de
+(Simulação) é puramente computacional e não depende de
 quaisquer recursos externos. Garantia análoga aplica-se ao
 \texttt{AdaptadorMDE}: na ausência ou falha de leitura do GeoTIFF, é
 gerada uma superfície gaussiana sintética que assegura visualização

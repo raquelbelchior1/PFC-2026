@@ -19,7 +19,7 @@ físico}, no qual a turma de instrução modela manualmente o terreno a partir
 da carta para obter uma representação tridimensional tangível.
 
 Embora o caixão de areia seja um instrumento didático consagrado, a
-\emph{transição cognitiva} entre a representação bidimensional da carta
+transição cognitiva entre a representação bidimensional da carta
 (curvas de nível) e o relevo tridimensional construído na areia exige
 considerável esforço mental e tempo de instrução. Erros de interpretação
 das curvas de nível resultam em terrenos modelados que divergem da
@@ -29,7 +29,7 @@ Os \textbf{caixões de areia com realidade aumentada} — na literatura
 internacional, \textit{Augmented Reality Sandboxes} — emergiram, na última
 década, como uma resposta tecnológica a esse problema. Por meio da
 combinação de um \textbf{sensor de profundidade} (tipicamente o
-\textit{Microsoft Kinect}) com um \textbf{projetor multimídia} suspenso
+Microsoft Kinect) com um \textbf{projetor multimídia} suspenso
 sobre a caixa, esses sistemas projetam, em tempo real, curvas de nível
 coloridas, escalas batimétricas ou texturas de relevo diretamente sobre a
 superfície da areia. À medida que o operador modifica o relevo — cavando ou
@@ -37,25 +37,25 @@ acumulando areia com as mãos — a projeção se ajusta dinamicamente,
 fornecendo \emph{feedback} visual imediato e dispensando a interpretação
 mental das curvas de nível.
 
-A iniciativa pioneira do projeto \textit{SARndbox}, da Universidade da
+A iniciativa pioneira do projeto SARndbox, da Universidade da
 Califórnia em Davis~\cite{sarndbox}, demonstrou a viabilidade técnica da
 abordagem. Adaptações posteriores expandiram o conceito para a educação
 em geociências, hidrologia e cartografia. Neste trabalho, por sugestão da
 orientação, evita-se o uso do anglicismo como apelido do sistema
 desenvolvido, preferindo-se, ao longo de todo o texto, a denominação em
-língua portuguesa \emph{caixão de areia com realidade aumentada}.
+língua portuguesa ``caixão de areia com realidade aumentada''.
 
 No contexto militar, entretanto,
 três limitações dos sistemas existentes restringem sua adoção:
 
 \begin{enumerate}
-    \item A maioria dos sistemas projeta apenas \emph{curvas de nível
-          decorativas} ou simulações hidrológicas qualitativas, sem
+    \item A maioria dos sistemas projeta apenas curvas de nível
+          decorativas ou simulações hidrológicas qualitativas, sem
           comparação com um relevo de referência específico;
-    \item Não há \emph{guia visual explícito} indicando \emph{onde
-          cavar} ou \emph{onde acumular} areia para reproduzir um terreno
+    \item Não há guia visual explícito indicando onde
+          cavar ou onde acumular areia para reproduzir um terreno
           alvo determinado pela cartografia oficial;
-    \item As implementações de referência são \emph{frágeis} quanto a
+    \item As implementações de referência são frágeis quanto a
           falhas de hardware: a ausência do Kinect ou do arquivo de
           terreno provoca o encerramento abrupto do programa,
           comprometendo apresentações didáticas e demonstrações.
@@ -104,9 +104,10 @@ sensor de profundidade ou do arquivo de terreno?''
 Desenvolver um sistema funcional de Caixão de Areia com Realidade
 Aumentada que projete sobre uma caixa física de areia uma
 \textbf{malha discretizada de quadrados coloridos} comparando, célula a
-célula, o relevo medido pelo sensor Kinect com o relevo de referência
-extraído de um arquivo GeoTIFF, e que opere em modalidade \emph{plug \&
-play} com fallback automático para um emulador interativo.
+célula, o relevo medido por um sensor de profundidade com o relevo de
+referência extraído de um arquivo GeoTIFF, e que opere em modalidade
+\emph{plug \& play} com fallback automático para um emulador
+interativo.
 
 \subsection{Objetivos específicos}
 \label{subsec:obj-especificos}
@@ -135,7 +136,7 @@ play} com fallback automático para um emulador interativo.
           \textbf{testes unitários automatizados}, seguindo os
           princípios do \textit{Test-Driven Development} (TDD);
     \item Documentar o projeto em três níveis: documentação oficial
-          acadêmica, \emph{README} de uso prático e relatório de PFC
+          acadêmica, README de uso prático e relatório de PFC
           em conformidade com as normas da ABNT.
 \end{enumerate}
 
@@ -149,8 +150,8 @@ de negócio quantitativa} de comparação com tolerância numérica explícita
 contra um MDE oficial, e (iii) uma \textbf{arquitetura resiliente} que
 prioriza a confiabilidade operacional na presença de falhas de hardware
 ou de dados. Diferentemente de implementações que utilizam apenas mapas
-de cores qualitativos, o sistema proposto produz uma \emph{decisão
-operacional} para cada célula da mesa: cavar, preencher ou manter.
+de cores qualitativos, o sistema proposto produz uma decisão
+operacional para cada célula da mesa: cavar, preencher ou manter.
 
 A justificativa militar é direta: a doutrina nacional prescreve o uso
 do caixão de areia para o ensino e o planejamento tático em todas as

@@ -16,10 +16,10 @@ Digitais de Elevação (Seção~\ref{sec:mde}).
 \section{O Sensor Microsoft Kinect}
 \label{sec:kinect}
 
-O \textit{Microsoft Kinect} é um dispositivo de captura tridimensional
+O Microsoft Kinect é um dispositivo de captura tridimensional
 originalmente concebido para o controle gestual do videogame
-\textit{Xbox 360} (versão~v1, 2010) e posteriormente sucedido pela
-versão para \textit{Xbox One} (versão~v2, 2014). Para fins acadêmicos e
+Xbox 360 (versão~v1, 2010) e posteriormente sucedido pela
+versão para Xbox One (versão~v2, 2014). Para fins acadêmicos e
 industriais, o sensor revelou-se notável pela combinação de baixo custo
 e qualidade aceitável de profundidade, tendo se consolidado como
 plataforma de pesquisa em visão computacional, robótica e interação
@@ -29,7 +29,7 @@ humano-computador~\cite{zhang2012kinect}.
 \label{subsec:tof}
 
 A versão~v1 do Kinect mede a profundidade pelo princípio de
-\emph{luz estruturada}: um projetor infravermelho emite um padrão
+luz estruturada: um projetor infravermelho emite um padrão
 pseudo-aleatório de pontos sobre a cena, e uma câmera infravermelha
 calibrada captura a deformação desse padrão. A profundidade de cada
 \emph{pixel} é estimada por triangulação. A versão~v2 substitui esse
@@ -83,7 +83,7 @@ maior resolução de profundidade ($1024 \times 1024$ no modo
 \textit{narrow field of view}) e uma unidade de medição inercial (IMU)
 integrada, útil para compensar pequenas oscilações do suporte do sensor.
 A família \textbf{Intel RealSense} (modelos D400), por sua vez, emprega
-\textit{visão estéreo ativa}: um par de câmeras infravermelhas associado
+visão estéreo ativa: um par de câmeras infravermelhas associado
 a um projetor de padrão estrutural estima a profundidade por
 triangulação, dispensando o cálculo de fase do \textit{Time-of-Flight} e
 reduzindo o consumo energético, ao custo de maior ruído em superfícies
@@ -138,7 +138,7 @@ projetor), $R_{\text{ext}}$ e $\mathbf{t}_{\text{ext}}$ formam a
 \textbf{matriz extrínseca} (rotação e translação do referencial mundo
 para o referencial do dispositivo) e $s$ é um fator de escala não nulo.
 
-O modelo de Tsai~\cite{tsai1987versatile} estende o
+O modelo de Tsai~\citeonline{tsai1987versatile} estende o
 \textit{pinhole} canônico com a inclusão de \textbf{distorções óticas}
 radiais (coeficientes $k_1, k_2, k_3$) e tangenciais ($p_1, p_2$),
 fornecendo precisão sub-pixel para câmeras e projetores reais. A
@@ -180,7 +180,7 @@ madeira do caixão, o piso ao redor e ruído da sala — outliers que, se
 incluídos ingenuamente no SVD, distorcem a normal calculada.
 
 O algoritmo \textbf{RANSAC} (\textit{Random Sample Consensus}), proposto
-por Fischler e Bolles~\cite{fischler1981random}, resolve esse problema por
+por Fischler e Bolles~\citeonline{fischler1981random}, resolve esse problema por
 amostragem aleatória repetida. Dada uma nuvem de $N$ pontos, cada
 iteração executa três passos: (i) sorteiam-se $k$ pontos mínimos
 necessários para definir o modelo — no caso de um plano, $k = 3$; (ii)

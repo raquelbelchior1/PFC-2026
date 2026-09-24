@@ -13,7 +13,7 @@ sensor Kinect físico.
 \section{Motivação para a Discretização em Malha}
 \label{sec:motiv-malha}
 
-A primeira versão experimental do sistema projetava \emph{diretamente}
+A primeira versão experimental do sistema projetava diretamente
 cada ponto da nuvem do Kinect como um \emph{pixel} colorido. Essa
 abordagem revelou três deficiências severas:
 
@@ -33,7 +33,7 @@ abordagem revelou três deficiências severas:
 A solução proposta substitui a renderização pontual por uma
 \textbf{discretização em malha regular}. Os pontos são agregados em
 células retangulares, cada célula é classificada por uma única cor e
-desenhada como um \emph{polígono preenchido} via
+desenhada como um polígono preenchido via
 \texttt{cv2.fillPoly}.
 
 \section{Definição Formal da Malha}
@@ -78,7 +78,7 @@ da média é
 \sigma_{\bar{Z}_{i,j}} = \frac{\sigma}{\sqrt{|\mathcal{P}_{i,j}|}},
 \end{equation}
 
-\noindent o que evidencia a \emph{filtragem estatística} obtida pela
+\noindent o que evidencia a filtragem estatística obtida pela
 agregação. Tipicamente, com a resolução de profundidade do Kinect~v2 e a
 mesa coberta integralmente, cada célula recebe entre dezenas e centenas
 de pontos, reduzindo o ruído em mais de uma ordem de grandeza.
@@ -87,7 +87,7 @@ A implementação é totalmente vetorizada via NumPy, dispensando laços
 \textit{Python}. As somas e contagens por célula são acumuladas em
 duas matrizes $N_y \times N_x$ pela função \texttt{numpy.add.at}.
 Células sem pontos ($|\mathcal{P}_{i,j}| = 0$) são marcadas com
-\texttt{NaN} e simplesmente \emph{não renderizadas} no
+\texttt{NaN} e simplesmente não renderizadas no
 \textit{frame} corrente.
 
 \section{Regra de Coloração}

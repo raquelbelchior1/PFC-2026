@@ -74,7 +74,7 @@ em vez de listá-las na ordem em que aparecem no código-fonte.
 \emph{Subtotal} & & \emph{21} \\
 \addlinespace
 \multicolumn{3}{@{}l}{\textbf{5. Discretização, renderização e integração ponta a ponta}} \\
-\texttt{TestDiscretizacaoGradeNegativa} & Filtro \textit{dentro} do domínio             & 1 \\
+\texttt{TestDiscretizacaoGradeNegativa} & Filtro \texttt{dentro} do domínio             & 1 \\
 \texttt{TestRenderizacaoGrade}       & Rasterização \texttt{cv2.fillPoly}              & 2 \\
 \texttt{TestPipeline}                & Integração Passos 1+2                           & 2 \\
 \texttt{TestFluxoAceitacao}          & Aceitação ponta a ponta (Seção~\ref{sec:aceitacao}) & 1 \\
@@ -251,7 +251,7 @@ OK
 Contar testes prova apenas que a suíte existe; a \textbf{cobertura de
 linhas}, medida com a ferramenta \texttt{coverage.py} instrumentando o
 interpretador durante a execução da suíte, prova quanto do código de
-produção é de fato \emph{exercitado} por ela — isto é, quantas linhas
+produção é de fato exercitado por ela — isto é, quantas linhas
 efetivamente rodam pelo menos uma vez sob teste, e não apenas quantas
 funções têm algum caso associado. A Figura~\ref{fig:cobertura-modulos}
 apresenta esses números para os dois módulos que concentram a lógica
@@ -484,7 +484,7 @@ de demonstração física contínua, uma limitação de infraestrutura de
 ensaio e não do artefato de \textit{software} entregue. A reconstrução
 do caixão de teste com um recorte adequado para o campo de visão do
 sensor, e a eventual substituição do Kinect por um sensor moderno
-(Capítulo~\ref{cap:conclusao}, \emph{Trabalhos Futuros}), permanecem como
+(Capítulo~\ref{cap:conclusao}, ``Trabalhos Futuros''), permanecem como
 providências diretas para uma demonstração física integral em
 iterações futuras do projeto.
 
@@ -561,7 +561,7 @@ Em modo real, com o sensor Kinect~v2 (adaptado, Seção~\ref{cap:rendering})
 conectado via USB~3.0, o sistema processa nuvens de até
 $512 \times 424 = 217{.}088$ pontos brutos por \textit{frame}, reduzidos
 pelo filtro de alcance ($0{,}5$ a $4{,}5$~m) e, após a calibração, pelo
-filtro \textit{dentro} do domínio físico da mesa
+filtro \texttt{dentro} do domínio físico da mesa
 (Seção~\ref{subsec:T-shift}). A taxa de quadros de $>30$~fps reportada
 para o modo simulação (Seção anterior) não foi remedida de forma
 independente em modo real: os ensaios de campo confirmaram resposta
@@ -603,7 +603,7 @@ Seção~\ref{subsec:limitacao-fisica}.
 Durante o ensaio preliminar de campo, foi observado um defeito visual
 significativo: após a calibração com o sensor apontado para uma
 superfície plana (piso de concreto), a janela \texttt{Projecao\_Areia}
-exibia apenas \emph{um pequeno retângulo azul} no canto inferior, em
+exibia apenas um pequeno retângulo azul no canto inferior, em
 vez da malha contínua esperada de quadrados coloridos. A
 Figura~\ref{fig:bug} ilustra o sintoma observado.
 
@@ -629,16 +629,16 @@ A análise da implementação revelou duas causas concorrentes:
 \begin{enumerate}
     \item A função \texttt{transformar\_pontos()}, ao aplicar a matriz
           $T$ obtida pela calibração, leva o centroide do plano à
-          \emph{origem} $(0, 0, 0)$. Em consequência, a nuvem
+          origem $(0, 0, 0)$. Em consequência, a nuvem
           transformada ocupa aproximadamente
-          $[-L_x/2, +L_x/2] \times [-L_y/2, +L_y/2]$, e \emph{metade} dos
+          $[-L_x/2, +L_x/2] \times [-L_y/2, +L_y/2]$, e metade dos
           pontos possui coordenadas negativas. A função
           \texttt{discretizar\_nuvem\_em\_grade()} aplicava
           \texttt{numpy.clip} nos índices de célula, colapsando todos
           esses pontos negativos na coluna~0 e na linha~0 da grade —
           isto é, em uma estreita faixa de borda;
     \item Os parâmetros de projeção do projetor, em modo real, eram
-          \emph{valores \textit{mock}} de placeholder ($f_x = f_y = 500$,
+          valores \textit{mock} de placeholder ($f_x = f_y = 500$,
           $c_x = 320$, $c_y = 240$, $\mathbf{t}_{\text{ext}} = (0,0,1)^{T}$),
           que mapeavam o domínio da mesa para uma sub-região da janela
           em vez de preenchê-la integralmente.
@@ -658,7 +658,7 @@ ajustes simultâneos em \texttt{main.py} e \texttt{motor\_caixao\_areia.py}:
           \texttt{discretizar\_nuvem\_em\_grade()} passou a descartar
           pontos com $x \notin [0, L_x)$ ou $y \notin [0, L_y)$ antes do
           \texttt{clip}, eliminando o acúmulo nas células de borda;
-    \item \textbf{Projeção \emph{coerente}.} Os parâmetros do projetor
+    \item \textbf{Projeção coerente.} Os parâmetros do projetor
           em modo real foram substituídos pela mesma parametrização
           empregada na simulação (Equação~\eqref{eq:fxfy-virtual}),
           assegurando que a malha preencha a janela integralmente.

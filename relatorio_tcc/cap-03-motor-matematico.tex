@@ -137,17 +137,17 @@ plano $XY$ do novo sistema. Essa invariante é verificada pelo teste
 \label{subsec:T-shift}
 
 A matriz $T$ acima leva o centroide $\bar{\mathbf{p}}$ do plano
-detectado à \emph{origem} $(0, 0, 0)$. Entretanto, a convenção interna
+detectado à origem $(0, 0, 0)$. Entretanto, a convenção interna
 de discretização e renderização (Capítulo~\ref{cap:rendering}) adota a
 mesa como o domínio $[0, L_x] \times [0, L_y] \times [0, h_{\max}]$, com
-a origem $XY$ em um \emph{canto} e a cota $Z = 0$ fixada na \textbf{base
+a origem $XY$ em um canto e a cota $Z = 0$ fixada na \textbf{base
 de madeira} do caixão (alturas de areia sempre positivas, crescendo
 para cima). Sem ajuste em $XY$, metade dos pontos da nuvem (aqueles com
-$x < 0$ ou $y < 0$) seria projetada fora do domínio e \emph{colapsada
-pelo \texttt{clip}} nas células de borda da grade — um defeito
+$x < 0$ ou $y < 0$) seria projetada fora do domínio e colapsada
+pelo \texttt{clip} nas células de borda da grade — um defeito
 observado em ensaio preliminar de campo, no qual a projeção exibia
 apenas um pequeno retângulo correspondente ao quadrante positivo. E sem
-ajuste em $Z$, a cota zero coincidiria com o \emph{plano de calibração}
+ajuste em $Z$, a cota zero coincidiria com o plano de calibração
 em vez da base do caixão — o que é apenas correto quando esse plano é a
 própria base (modo \textbf{base vazia}), mas não quando ele é a tampa
 apoiada $h_{\max}$ acima dela (modo \textbf{tampa}, oficial).
@@ -174,12 +174,12 @@ $\delta_{\text{tampa}} = 0$ no modo base vazia. Após essa composição, o
 ponto físico que se encontra exatamente sob o sensor (centroide do
 plano detectado) cai em $(L_x/2,\, L_y/2,\, \delta_{\text{tampa}}
 h_{\max})$: no modo tampa, na cota $h_{\max}$ (o topo do caixão); no
-modo base, na cota $0$ (o fundo, que \emph{é} o próprio plano de
+modo base, na cota $0$ (o fundo, que é o próprio plano de
 calibração). Em ambos os casos, a nuvem ocupa naturalmente $[0, L_x]
 \times [0, L_y]$ em $XY$ e a base de madeira corresponde sempre a
 $Z_{\text{mesa}} = 0$, independentemente do modo de calibração
 escolhido. Adicionalmente, a função \texttt{discretizar\_nuvem\_em\_grade()}
-aplica um filtro \textit{\textbf{dentro}} que descarta pontos cujas
+aplica um filtro \texttt{dentro} que descarta pontos cujas
 coordenadas $XY$ extrapolem o domínio físico da mesa, o que é típico do
 campo de visão do Kinect montado a 2,5~m (FOV horizontal de
 aproximadamente 70° cobre uma área maior do que a mesa).
@@ -202,7 +202,7 @@ fórmula geral~\eqref{eq:pinhole}, com distorções óticas residuais
 $(k_1, k_2, p_1, p_2, k_3)$ encapsuladas pela função
 \texttt{cv2.projectPoints} do OpenCV.
 
-Em \emph{modo simulação} e em \emph{modo real}, os parâmetros
+Em modo simulação e em modo real, os parâmetros
 intrínsecos e extrínsecos são configurados de forma a mapear o domínio
 físico $[0, L_x] \times [0, L_y]$ na janela de projeção. Adotando uma
 distância virtual da câmera $d_{\text{cam}} = 10$~m, $\mathbf{t}_{\text{ext}} =
@@ -237,7 +237,7 @@ Caso a premissa de alinhamento físico não se sustente — projetor
 montado com alguma inclinação residual, por exemplo —, o sistema
 disponibiliza um caminho alternativo de \textbf{estimação empírica} dos
 parâmetros de Tsai, no qual a etapa de otimização que o artigo original
-de Tsai~\cite{tsai1987versatile} descreve é de fato executada. A
+de Tsai~\citeonline{tsai1987versatile} descreve é de fato executada. A
 função \texttt{gerar\_imagem\_tabuleiro()} produz um padrão de
 tabuleiro de xadrez com cantos internos em coordenadas conhecidas do
 projetor; essa imagem é projetada \textbf{temporariamente} na janela
