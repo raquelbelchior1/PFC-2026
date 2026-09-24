@@ -230,6 +230,44 @@ centrado sobre a mesa —, esses parâmetros podem ser deduzidos
 analiticamente, sem necessidade de um procedimento de estimação
 experimental.
 
+A Tabela~\ref{tab:intrinsecos-projetor} instancia a
+Equação~\eqref{eq:fxfy-virtual} com os valores efetivamente usados
+pelo sistema: a resolução de projeção padrão
+(\texttt{RESOLUCAO\_PROJETOR}, fixa no código) e a distância virtual
+$d_{\text{cam}} = 10$~m adotada em \texttt{main.py}, aplicadas à mesa
+física de referência deste trabalho ($1,5~\text{m} \times
+1,5~\text{m}$, Capítulo~\ref{cap:rendering}).
+
+\begin{table}[!ht]
+\centering
+\caption{Parâmetros intrínsecos da câmera virtual do projetor (modelo analítico da Equação~\eqref{eq:fxfy-virtual}), instanciados para a mesa física de referência deste trabalho.}
+\label{tab:intrinsecos-projetor}
+\begin{tabular}{ll}
+\toprule
+\textbf{Parâmetro} & \textbf{Valor} \\
+\midrule
+Resolução do projetor $(W, H)$          & $640 \times 480$ pixels \\
+Distância virtual da câmera $d_{\text{cam}}$ & $10{,}00$ m \\
+Dimensões da mesa $(L_x, L_y)$          & $1{,}50 \times 1{,}50$ m \\
+Distância focal $f_x$                   & $4\,266{,}67$ pixels \\
+Distância focal $f_y$                   & $3\,200{,}00$ pixels \\
+Centro óptico $(c_x, c_y)$              & $(0{,}00,\; 0{,}00)$ pixels \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Ao contrário dos parâmetros intrínsecos do Kinect
+(Tabela~\ref{tab:intrinsecos}), que são uma especificação fixa do
+fabricante do sensor, $f_x$ e $f_y$ do projetor não são uma constante
+de hardware: dependem das dimensões físicas da mesa configuradas pelo
+operador na inicialização do sistema (Apêndice~\ref{ap:roteiro}), já
+que a Equação~\eqref{eq:fxfy-virtual} os deriva justamente dessas
+dimensões. Os valores acima instanciam essa equação para a mesa de
+referência ($1,5~\text{m} \times 1,5~\text{m}$) usada em todos os
+ensaios e testes deste trabalho; $W$, $H$ e $d_{\text{cam}}$, por sua
+vez, são constantes do sistema, fixas independentemente da mesa
+configurada.
+
 \subsection{Calibração empírica alternativa do projetor (tabuleiro de xadrez)}
 \label{subsec:calib-empirica-projetor}
 

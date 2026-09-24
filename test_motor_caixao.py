@@ -60,6 +60,7 @@ from mde_cartografia import (
     CUBO_X_MIN, CUBO_X_MAX, CUBO_Y_MIN, CUBO_Y_MAX,
     CUBO_Z_TARGET, FUNDO_Z_TARGET,
     TIPO_MAPA_CUBO,
+    TIPO_MAPA_GAUSSIANA,
     AdaptadorMDE,
 )
 
@@ -1771,10 +1772,11 @@ class TestRenderizacaoGrade(unittest.TestCase):
 # 14. TESTE DE ACEITAÇÃO (Requisito 4) — fluxo empírico Passos A–E
 # =====================================================================
 
-class TestFluxoAceitacao(unittest.TestCase):
+class _BaseFluxoSintetico:
     """
-    Reproduz ponta a ponta, com nuvens sintéticas, o fluxo de teste
-    empírico obrigatório da especificação:
+    Fixture compartilhada (constantes + helpers) para os testes que
+    reproduzem, com nuvens sintéticas, o fluxo de teste empírico
+    obrigatório da especificação:
 
     - **Passo A** — o caixão está completamente vazio (só a base de
       madeira, 2,7 m do sensor: 2,5 m até a tampa + 0,20 m de caixa).
@@ -1787,6 +1789,12 @@ class TestFluxoAceitacao(unittest.TestCase):
       centro é projetado em AZUL (falta volume).
     - **Passo E** — um cubo físico de 10 cm é inserido no centro → o
       Kinect lê a nova altura e o topo do cubo passa a ser VERDE.
+
+    Não herda de ``unittest.TestCase`` de propósito: é só um mixin de
+    fixture, para que ``TestFluxoAceitacao`` e
+    ``TestErroQuantitativoElevacao`` compartilhem a mesma nuvem
+    sintética sem que o executor de testes duplique a execução dos
+    métodos de teste de uma classe na outra.
     """
 
     LARGURA_MESA = 1.5
@@ -1795,12 +1803,18 @@ class TestFluxoAceitacao(unittest.TestCase):
     DIST_KINECT_TAMPA = 2.5   # m — "Distância do Kinect até a Tampa de Calibração"
     TAU = 0.02                # m — tolerância de acerto (VERDE dentro de ±2 cm)
 
-    # Sensor sintético: 60×60 px, fx=fy=60 → passo de ~4,5 cm na mesa,
-    # cobrindo o caixão inteiro (pontos fora de [0, 1.5) são filtrados
-    # pela discretização).
-    RES_PX = 60
-    FX = FY = 60.0
-    CX = CY = 30.0
+    # Intrínsecos reais do Kinect v2 (Tabela "Parâmetros intrínsecos do
+    # sensor de profundidade do Kinect v2" do relatório): resolução
+    # 512×424, fx=fy=367,35 px, centro óptico (260,00; 205,00) px. O
+    # campo de visão resultante, a 2,5-2,7 m de distância, é mais largo
+    # que o caixão de 1,5 m — os pontos fora de [0, 1.5) em cada eixo
+    # são descartados pela discretização em grade, exatamente como no
+    # sensor físico (Seção "RANSAC e SVD" do relatório).
+    RES_X = 512
+    RES_Y = 424
+    FX = FY = 367.35
+    CX = 260.0
+    CY = 205.0
 
     N_CELULAS = 15            # células de 10 cm — grade de projeção
     CELULA_CENTRO = (7, 7)    # x,y ∈ [0.70, 0.80) — dentro do cubo [0.50, 1.00]
@@ -1823,13 +1837,24 @@ class TestFluxoAceitacao(unittest.TestCase):
             depth_mm, fx=self.FX, fy=self.FY, cx=self.CX, cy=self.CY,
         )
 
+    # A tampa sintética é um plano perfeito, sem outlier algum — ao
+    # contrário da cena real, onde o RANSAC precisa de ~1000 iterações
+    # para isolar a tampa em meio a moldura/piso/ruído (valor padrão de
+    # ``ajustar_plano_ransac``). Com 100% dos pontos já coplanares,
+    # poucas iterações bastam para encontrar o ajuste ótimo; reduzir
+    # esse número aqui só evita custo computacional redundante com a
+    # resolução real do Kinect (512×424 pontos por chamada), sem alterar
+    # o caminho de código exercitado (``usar_ransac=True``, produção).
+    N_ITER_RANSAC_TESTE = 20
+
     def _calibrar_com_tampa(self) -> np.ndarray:
         """Passo C: RANSAC sobre a tampa plana + T_shift (cota zero na base)."""
         depth_tampa = np.full(
-            (self.RES_PX, self.RES_PX), self.DEPTH_TAMPA_MM, dtype=np.uint16
+            (self.RES_Y, self.RES_X), self.DEPTH_TAMPA_MM, dtype=np.uint16
         )
         normal, d, centroide, X, Y, Z, T = pipeline_plano_e_base(
             self._nuvem(depth_tampa), usar_ransac=True, semente_rng=42,
+            n_iter=self.N_ITER_RANSAC_TESTE,
         )
         # Validação de sanidade (como em main._executar_calibracao)
         distancia_medida = -float(centroide[2])
@@ -1844,7 +1869,7 @@ class TestFluxoAceitacao(unittest.TestCase):
     def _depth_caixa_vazia(self) -> np.ndarray:
         """Passo A: caixão completamente vazio (base plana a 2,7 m)."""
         return np.full(
-            (self.RES_PX, self.RES_PX), self.DEPTH_BASE_MM, dtype=np.uint16
+            (self.RES_Y, self.RES_X), self.DEPTH_BASE_MM, dtype=np.uint16
         )
 
     def _depth_com_cubo_fisico(self) -> np.ndarray:
@@ -1856,12 +1881,11 @@ class TestFluxoAceitacao(unittest.TestCase):
         """
         depth = self._depth_caixa_vazia()
         z_topo = self.DEPTH_TOPO_CUBO_MM / 1000.0
-        for v in range(self.RES_PX):
-            for u in range(self.RES_PX):
-                x = (u - self.CX) * z_topo / self.FX + self.LARGURA_MESA / 2.0
-                y = (v - self.CY) * z_topo / self.FY + self.COMPRIMENTO_MESA / 2.0
-                if 0.50 <= x <= 1.00 and 0.50 <= y <= 1.00:
-                    depth[v, u] = self.DEPTH_TOPO_CUBO_MM
+        uu, vv = np.meshgrid(np.arange(self.RES_X), np.arange(self.RES_Y))
+        x = (uu - self.CX) * z_topo / self.FX + self.LARGURA_MESA / 2.0
+        y = (vv - self.CY) * z_topo / self.FY + self.COMPRIMENTO_MESA / 2.0
+        no_cubo = (x >= 0.50) & (x <= 1.00) & (y >= 0.50) & (y <= 1.00)
+        depth[no_cubo] = self.DEPTH_TOPO_CUBO_MM
         return depth
 
     def _cores_da_grade(
@@ -1888,9 +1912,79 @@ class TestFluxoAceitacao(unittest.TestCase):
         cores = cor_por_diferenca_vetorizado(alturas, z_alvo, self.TAU)
         return cores, alturas, contagens
 
-    # ------------------------------------------------------------------
-    # O fluxo A → E
-    # ------------------------------------------------------------------
+    def _calibrar_apenas_plano(self) -> np.ndarray:
+        """Mesma rotina de ``_calibrar_com_tampa``, mas retorna só o
+        ajuste de plano (RANSAC+SVD), sem aplicar ``T_shift`` (o
+        deslocamento de origem que leva a cota zero até a base do
+        caixão). Usada exclusivamente como controle negativo: simula o
+        bug de esquecer essa etapa de deslocamento na calibração.
+        """
+        depth_tampa = np.full(
+            (self.RES_Y, self.RES_X), self.DEPTH_TAMPA_MM, dtype=np.uint16
+        )
+        _, _, _, _, _, _, T = pipeline_plano_e_base(
+            self._nuvem(depth_tampa), usar_ransac=True, semente_rng=42,
+            n_iter=self.N_ITER_RANSAC_TESTE,
+        )
+        return T
+
+    def _erro_mde(
+        self, T_final: np.ndarray, n_celulas: int | None = None,
+        tipo_mapa: str = TIPO_MAPA_CUBO,
+    ) -> dict:
+        """Erro entre a altura medida (captura → transformação → grade)
+        e a altura alvo do MDE, célula a célula, no cenário do Passo E
+        (cubo físico de 10 cm inserido no terço central).
+
+        Isolado da coloração: para exatamente na saída de
+        ``discretizar_nuvem_em_grade``, sem chamar
+        ``cor_por_diferenca_vetorizado``. Parametrizado por ``T_final``,
+        ``n_celulas`` e ``tipo_mapa`` para permitir tanto a medição de
+        referência quanto os controles negativos (calibração quebrada,
+        mapa alvo incorreto) e a varredura de resolução da grade.
+        """
+        n_celulas = n_celulas or self.N_CELULAS
+        pontos_mesa = transformar_pontos(
+            T_final, self._nuvem(self._depth_com_cubo_fisico()),
+        )
+        alturas, contagens = discretizar_nuvem_em_grade(
+            pontos_mesa, n_celulas, n_celulas,
+            self.LARGURA_MESA, self.COMPRIMENTO_MESA,
+        )
+
+        mde = AdaptadorMDE(
+            largura_mesa=self.LARGURA_MESA,
+            comprimento_mesa=self.COMPRIMENTO_MESA,
+            profundidade_caixa=self.PROFUNDIDADE_CAIXA,
+            tipo_mapa=tipo_mapa,
+        )
+        tam_celula = self.LARGURA_MESA / n_celulas
+        centros = (np.arange(n_celulas) + 0.5) * tam_celula
+        xx, yy = np.meshgrid(centros, centros)
+        z_alvo = mde.obter_z_alvo_array(xx, yy)
+
+        # Só entram na métrica células com leitura real do Kinect —
+        # células sem contagem ficam em 0.0 por convenção da grade e
+        # não representam medição alguma.
+        validas = contagens > 0
+        erro = alturas[validas] - z_alvo[validas]
+        amplitude = float(z_alvo.max() - z_alvo.min())
+        rmse = float(np.sqrt(np.mean(erro ** 2)))
+        mae = float(np.mean(np.abs(erro)))
+        return {
+            "rmse": rmse,
+            "mae": mae,
+            "erro_max": float(np.max(np.abs(erro))),
+            "amplitude": amplitude,
+            "pct_rmse": rmse / amplitude * 100.0,
+            "pct_mae": mae / amplitude * 100.0,
+            "n_celulas_validas": int(np.count_nonzero(validas)),
+            "n_celulas_total": int(validas.size),
+        }
+
+
+class TestFluxoAceitacao(_BaseFluxoSintetico, unittest.TestCase):
+    """O fluxo A → E: aceitação categórica (cores) ponta a ponta."""
 
     def test_fluxo_completo_passos_a_a_e(self):
         lin_c, col_c = self.CELULA_CENTRO
@@ -1941,6 +2035,172 @@ class TestFluxoAceitacao(unittest.TestCase):
             cores_e[lin_b, col_b], list(self.VERDE),
             err_msg="Passo E: a base fora do cubo deveria continuar VERDE",
         )
+
+
+class TestErroQuantitativoElevacao(_BaseFluxoSintetico, unittest.TestCase):
+    """
+    Teste quantitativo do escopo ponta a ponta **sem o último estágio**
+    (cor) da Tabela 6 ("Testes unitários versus teste de ponta a ponta").
+
+    ``TestFluxoAceitacao`` valida o contrato categórico do pipeline
+    (vermelho/azul/verde). Esta classe mede, em vez disso, o erro
+    contínuo entre o modelo de elevação medido pelo pipeline — captura
+    → transformação → grade — e o modelo de elevação alvo (MDE),
+    antes da conversão categórica feita por ``cor_por_diferenca``.
+
+    Além da medição de referência (calibração correta, resolução de
+    produção), a classe inclui:
+
+    - **Controles negativos** — reexecutam a mesma medição com uma
+      etapa do pipeline deliberadamente quebrada (sem calibração, sem
+      o deslocamento de cota zero, com o mapa alvo errado) para provar
+      que a métrica de erro *de fato* denuncia essas falhas, e não
+      passaria de qualquer forma independentemente do que o código
+      fizesse.
+    - **Varredura de resolução da grade** — mede o erro em várias
+      granularidades (``N_CELULAS``) para caracterizar empiricamente,
+      em vez de apenas presumir, como o erro se comporta em função da
+      resolução.
+    """
+
+    # ------------------------------------------------------------------
+    # Medição de referência
+    # ------------------------------------------------------------------
+
+    def test_erro_percentual_mde_antes_da_coloracao(self):
+        T_final = self._calibrar_com_tampa()
+        r = self._erro_mde(T_final)
+
+        self.assertGreater(
+            r["n_celulas_validas"], 0,
+            "A grade sintética deveria ter pelo menos uma célula com leitura",
+        )
+
+        print(
+            "\n[Erro quantitativo MDE, antes da coloração — referência] "
+            f"RMSE={r['rmse'] * 100:.3f} cm | MAE={r['mae'] * 100:.3f} cm | "
+            f"erro máx={r['erro_max'] * 100:.3f} cm | "
+            f"amplitude={r['amplitude'] * 100:.1f} cm | "
+            f"erro% (RMSE)={r['pct_rmse']:.3f}% | "
+            f"erro% (MAE)={r['pct_mae']:.3f}% | "
+            f"n_células={r['n_celulas_validas']}/{r['n_celulas_total']}"
+        )
+
+        # Regressão: com dados sintéticos sem ruído, o erro vem só da
+        # discretização em grade — células na borda do cubo misturam
+        # pontos do topo (+0,10 m) e da base (0,0 m) na mesma média,
+        # o que empurra o RMSE (sensível a outliers) acima do MAE
+        # (erro típico). Ambos devem ficar abaixo da tolerância de
+        # acerto (TAU = 2 cm) expressa em % da amplitude do alvo.
+        self.assertLess(
+            r["pct_mae"], 5.0,
+            "Erro percentual médio (MAE) do MDE medido, antes da coloração, "
+            "acima do esperado",
+        )
+        self.assertLess(
+            r["pct_rmse"], 15.0,
+            "Erro percentual RMSE do MDE medido, antes da coloração, "
+            "acima do esperado",
+        )
+
+    # ------------------------------------------------------------------
+    # Controles negativos — a métrica precisa ser capaz de acusar erro
+    # ------------------------------------------------------------------
+
+    def test_controle_negativo_sem_calibracao(self):
+        """Sem NENHUMA calibração (T = identidade), a altura medida é a
+        profundidade bruta da câmera (~2,6-2,7 m), incomparável com o
+        MDE alvo (0-0,10 m). O erro percentual deve disparar."""
+        r = self._erro_mde(np.eye(4))
+        print(
+            "\n[Controle negativo: sem calibração] "
+            f"erro% (RMSE)={r['pct_rmse']:.1f}% | erro% (MAE)={r['pct_mae']:.1f}%"
+        )
+        self.assertGreater(
+            r["pct_rmse"], 500.0,
+            "Sem calibração, o erro deveria ser ordens de grandeza maior "
+            "que o esperado — se não for, a métrica não está realmente "
+            "medindo a altura calibrada.",
+        )
+
+    def test_controle_negativo_sem_deslocamento_cota_zero(self):
+        """Calibração parcial: ajusta o plano da tampa, mas "esquece" de
+        aplicar ``T_shift`` (o deslocamento que leva a cota zero até a
+        base do caixão). É um erro de integração plausível — por
+        exemplo, alguém removendo essa etapa por engano — e deve ficar
+        bem acima da tolerância de aceitação."""
+        T_sem_shift = self._calibrar_apenas_plano()
+        r = self._erro_mde(T_sem_shift)
+        print(
+            "\n[Controle negativo: sem deslocamento de cota zero] "
+            f"erro% (RMSE)={r['pct_rmse']:.1f}% | erro% (MAE)={r['pct_mae']:.1f}%"
+        )
+        self.assertGreater(
+            r["pct_rmse"], 100.0,
+            "Sem o deslocamento de cota zero, o erro deveria superar a "
+            "amplitude inteira do modelo alvo.",
+        )
+
+    def test_controle_negativo_mapa_alvo_errado(self):
+        """Calibração correta, mas o MDE comparado é o mapa errado
+        (Morro Gaussiano em vez de Cubo Central — por exemplo, um erro
+        de configuração que troca o mapa ativo). O erro deve ficar
+        visivelmente acima do erro de referência, mesmo sem nenhuma
+        falha no pipeline físico de captura.
+
+        Comparação em RMSE absoluto (metros), não em erro percentual:
+        o mapa Cubo Central tem amplitude 0,10 m e o Morro Gaussiano
+        tem amplitude ~0,20 m, então normalizar os dois pela própria
+        amplitude (como nas demais métricas desta classe) compararia
+        percentuais de bases diferentes e diluiria o efeito.
+        """
+        T_final = self._calibrar_com_tampa()
+        referencia = self._erro_mde(T_final, tipo_mapa=TIPO_MAPA_CUBO)
+        r = self._erro_mde(T_final, tipo_mapa=TIPO_MAPA_GAUSSIANA)
+        print(
+            "\n[Controle negativo: mapa alvo errado] "
+            f"RMSE={r['rmse'] * 100:.3f} cm "
+            f"(referência com mapa certo: {referencia['rmse'] * 100:.3f} cm)"
+        )
+        self.assertGreater(
+            r["rmse"], 2 * referencia["rmse"],
+            "Comparar contra o mapa alvo errado deveria pelo menos "
+            "dobrar o RMSE absoluto em relação à referência.",
+        )
+
+    # ------------------------------------------------------------------
+    # Varredura de resolução da grade — caracteriza, não presume
+    # ------------------------------------------------------------------
+
+    def test_erro_por_resolucao_da_grade(self):
+        """Mede o erro percentual em várias resoluções de grade para
+        caracterizar empiricamente o efeito da discretização, em vez de
+        apenas presumi-lo. Resultado observado (não monotônico): grades
+        grosseiras (poucas células, cada uma grande) e grades finas
+        demais (poucas leituras de Kinect por célula) pioram o erro; a
+        resolução de produção (``N_CELULAS = 15``, células de 10 cm)
+        fica perto do melhor ponto observado nesta varredura — nenhuma
+        resolução testada rompe uma cota de sanidade bem acima da
+        tolerância de aceitação.
+        """
+        T_final = self._calibrar_com_tampa()
+        resultados = {}
+        for n in (5, 10, 15, 20, 30, 60):
+            resultados[n] = self._erro_mde(T_final, n_celulas=n)
+
+        linhas = " | ".join(
+            f"N={n}: RMSE%={r['pct_rmse']:.2f} MAE%={r['pct_mae']:.2f} "
+            f"(n_cél={r['n_celulas_validas']})"
+            for n, r in resultados.items()
+        )
+        print(f"\n[Varredura de resolução da grade] {linhas}")
+
+        for n, r in resultados.items():
+            self.assertLess(
+                r["pct_rmse"], 20.0,
+                f"N_CELULAS={n}: erro percentual (RMSE) fora da cota de "
+                "sanidade em toda a varredura de resolução",
+            )
 
 
 # =====================================================================

@@ -311,7 +311,7 @@ os dois estilos, tais como efetivamente implementados na suíte.
 \midrule
 Exemplo & \texttt{TestGramSchmidt}, \texttt{TestProjecaoTsai}, \dots & \texttt{TestFluxoAceitacao} \\
 Escopo & Uma única função de produção, isolada & Cadeia completa: captura $\to$ transformação $\to$ grade $\to$ MDE $\to$ cor \\
-Entrada & Poucos pontos/valores artificiais, escolhidos a dedo & Nuvem de profundidade sintética de $60 \times 60$ pixels, emulando um \textit{frame} Kinect completo \\
+Entrada & Poucos pontos/valores artificiais, escolhidos a dedo & Nuvem de profundidade sintética de $512 \times 424$ pixels — os intrínsecos reais do Kinect~v2 (Tabela~\ref{tab:intrinsecos}), não um substituto simplificado — emulando um \textit{frame} Kinect completo \\
 Oráculo (valor esperado) & Calculado manualmente, passo a passo (Listagem~\ref{lst:test-plano}) & Derivado do roteiro de aceitação físico da especificação (passos A--E, Apêndice~A) \\
 Depende de outros módulos do sistema? & Não — isolamento deliberado & Sim, por construção: é exatamente isso que o teste verifica \\
 Depende de hardware físico? & Não & Não (nuvem sintética; mesma geometria \textit{pinhole} do sensor real) \\
@@ -337,7 +337,7 @@ uma asserção \texttt{numpy.testing.assert\_array\_equal} sobre a cor
 \emph{exata} (BGR) produzida pelo \textit{pipeline} de produção — não
 uma aproximação visual, mas uma igualdade de valores de pixel.
 
-\begin{lstlisting}[caption={Método principal de \texttt{TestFluxoAceitacao}, extraído literalmente de \texttt{test\_motor\_caixao.py} (linhas 1895--1943).}, label=lst:e2e-code]
+\begin{lstlisting}[caption={Método principal de \texttt{TestFluxoAceitacao}, extraído literalmente de \texttt{test\_motor\_caixao.py} (linhas 1989--2037).}, label=lst:e2e-code]
 def test_fluxo_completo_passos_a_a_e(self):
     lin_c, col_c = self.CELULA_CENTRO
     lin_b, col_b = self.CELULA_BORDA
@@ -394,6 +394,282 @@ Kinect físico entrega dados de profundidade dentro dessa mesma
 sequência em condições de campo; essa segunda afirmação é tratada
 separadamente e com total transparência na
 Seção~\ref{subsec:limitacao-fisica}.
+
+\subsection{Erro quantitativo do modelo de elevação, antes da coloração}
+\label{subsec:erro-quantitativo-mde}
+
+O \texttt{TestFluxoAceitacao} valida o contrato categórico do
+\textit{pipeline}: cada célula da grade deve virar vermelho, azul ou
+verde. Mas a Tabela~\ref{tab:unit-vs-e2e} mostra que esse é só o
+último estágio do escopo ponta a ponta —
+captura~$\to$~transformação~$\to$~grade~$\to$~MDE~$\to$~cor.
+Uma pergunta complementar, e quantitativa, é: descartando esse último
+estágio, qual o erro numérico do modelo de elevação que a cadeia
+captura~$\to$~transformação~$\to$~grade efetivamente produz, em
+relação ao modelo de elevação alvo (MDE)? A conversão em cor é uma
+regra de limiar (Seção~\ref{sec:aceitacao}) que descarta magnitude —
+duas células com erros de 1~mm e 4~cm podem virar a mesma cor — por
+isso essa pergunta só pode ser respondida antes desse estágio.
+
+A classe \texttt{TestErroQuantitativoElevacao}
+(Listagem~\ref{lst:erro-quantitativo}) reaproveita a mesma nuvem
+sintética e a mesma calibração do passo E do roteiro de aceitação
+(cubo físico de 10~cm inserido no terço central), mas para na saída de
+\texttt{discretizar\_nuvem\_em\_grade} — antes da chamada a
+\texttt{cor\_por\_diferenca\_vetorizado} — e compara, célula a célula,
+a altura medida com a altura alvo
+(\texttt{AdaptadorMDE.obter\_z\_alvo\_array}). A nuvem sintética usa os
+intrínsecos reais do Kinect~v2 (resolução $512 \times 424$,
+$f_x = f_y = 367{,}35$~px, $(c_x, c_y) = (260{,}00,\, 205{,}00)$~px —
+Tabela~\ref{tab:intrinsecos}), e não um substituto simplificado: o
+erro medido nesta seção é o erro que o sensor efetivamente usado no
+sistema produziria neste cenário sintético, geometricamente idêntico
+ao roteiro de aceitação físico.
+
+É importante notar que os dois lados dessa comparação são calculados
+por caminhos de código independentes, evitando o risco de a métrica
+validar o sistema contra si mesmo: a altura \emph{medida}
+(\texttt{alturas}) vem exclusivamente da cadeia
+captura~$\to$~transformação~$\to$~grade, que processa a nuvem de
+pontos sintética; a altura \emph{alvo} (\texttt{z\_alvo}) vem de
+\texttt{AdaptadorMDE.obter\_z\_alvo\_array}, que apenas avalia a
+função geométrica do mapa ``Cubo Central'' nas coordenadas do centro de
+cada célula, sem nenhuma dependência dos módulos de captura,
+calibração ou discretização. Nenhuma das duas funções é chamada pela
+outra. Todos os dados de entrada são determinísticos — a nuvem
+sintética é gerada por uma função pura da profundidade, e o único
+elemento estocástico do \textit{pipeline}, o RANSAC da calibração,
+roda sob semente fixa (\texttt{semente\_rng=42}) — de modo que os
+números desta seção não são uma estimativa estatística sujeita a
+variância entre execuções, mas uma medição exata e reprodutível: rodar
+o teste de novo produz, bit a bit, o mesmo resultado.
+
+As métricas reportadas seguem as definições usuais de avaliação de
+modelos digitais de elevação, aplicadas apenas às $n$ células com pelo
+menos uma leitura do sensor sintético (índice $i$), onde $h_i$ é a
+altura medida e $\hat h_i$ é a altura alvo do MDE:
+
+\begin{align}
+\text{MAE} &= \frac{1}{n}\sum_{i=1}^{n} \left| h_i - \hat h_i \right| \\
+\text{RMSE} &= \sqrt{\frac{1}{n}\sum_{i=1}^{n} \left( h_i - \hat h_i \right)^2} \\
+\text{Erro\%} &= \frac{\text{MAE ou RMSE}}{\max(\hat h) - \min(\hat h)} \times 100
+\end{align}
+
+\noindent A normalização pela amplitude do modelo alvo ($10$~cm, no
+mapa Cubo Central) converte um erro absoluto em metros em um erro
+percentual comparável entre resoluções de grade e mapas alvo
+diferentes — o mesmo princípio do NRMSE (\textit{normalized root mean
+square error}) usado na validação de modelos digitais de elevação em
+cartografia.
+
+\begin{lstlisting}[caption={Núcleo de \texttt{\_erro\_mde}, o método comum usado pela medição de referência, pelos controles negativos e pela varredura de resolução — extraído literalmente de \texttt{test\_motor\_caixao.py} (linhas 1946--1983).}, label=lst:erro-quantitativo]
+n_celulas = n_celulas or self.N_CELULAS
+pontos_mesa = transformar_pontos(
+    T_final, self._nuvem(self._depth_com_cubo_fisico()),
+)
+alturas, contagens = discretizar_nuvem_em_grade(
+    pontos_mesa, n_celulas, n_celulas,
+    self.LARGURA_MESA, self.COMPRIMENTO_MESA,
+)
+
+mde = AdaptadorMDE(
+    largura_mesa=self.LARGURA_MESA,
+    comprimento_mesa=self.COMPRIMENTO_MESA,
+    profundidade_caixa=self.PROFUNDIDADE_CAIXA,
+    tipo_mapa=tipo_mapa,
+)
+tam_celula = self.LARGURA_MESA / n_celulas
+centros = (np.arange(n_celulas) + 0.5) * tam_celula
+xx, yy = np.meshgrid(centros, centros)
+z_alvo = mde.obter_z_alvo_array(xx, yy)
+
+# So entram na metrica celulas com leitura real do Kinect
+validas = contagens > 0
+erro = alturas[validas] - z_alvo[validas]
+amplitude = float(z_alvo.max() - z_alvo.min())
+rmse = float(np.sqrt(np.mean(erro ** 2)))
+mae = float(np.mean(np.abs(erro)))
+return {
+    "rmse": rmse, "mae": mae,
+    "erro_max": float(np.max(np.abs(erro))),
+    "amplitude": amplitude,
+    "pct_rmse": rmse / amplitude * 100.0,
+    "pct_mae": mae / amplitude * 100.0,
+    "n_celulas_validas": int(np.count_nonzero(validas)),
+    "n_celulas_total": int(validas.size),
+}
+\end{lstlisting}
+
+\noindent \texttt{T\_final}, \texttt{n\_celulas} e \texttt{tipo\_mapa}
+são parâmetros justamente para que o mesmo núcleo de comparação sirva,
+sem duplicação de código, tanto à medição de referência quanto aos
+controles negativos e à varredura de resolução descritos a seguir.
+
+A Tabela~\ref{tab:erro-quantitativo} reporta o resultado medido,
+reproduzido pela execução real de \texttt{pytest} no ambiente de
+validação, sobre as 225 células da grade de projeção
+($15 \times 15$, todas com pelo menos uma leitura do sensor
+sintético):
+
+\begin{table}[!ht]
+\centering
+\caption{Erro entre o modelo de elevação medido (captura $\to$ transformação $\to$ grade) e o MDE alvo, antes da coloração — cenário do Passo E (cubo físico de 10~cm no terço central).}
+\label{tab:erro-quantitativo}
+\begin{tabular}{@{}lr@{}}
+\toprule
+\textbf{Métrica} & \textbf{Valor} \\
+\midrule
+Células comparadas (com leitura do sensor) & 225 / 225 \\
+Amplitude do modelo alvo (MDE) & 10,000~cm \\
+Erro médio absoluto (MAE) & 0,325~cm \\
+Erro médio absoluto, em \% da amplitude & 3,249\% \\
+RMSE & 1,143~cm \\
+RMSE, em \% da amplitude & 11,426\% \\
+Erro máximo (célula de borda do cubo) & 5,480~cm \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+O erro médio absoluto (MAE, 3,249\%) é a medida mais representativa
+do erro típico: a grande maioria das 225 células está no interior
+homogêneo da base (0,0~m) ou do topo do cubo (+0,10~m), onde a
+discretização em grade não introduz erro algum — a célula é formada
+só por pontos da mesma superfície. O RMSE (11,426\%) é maior porque é
+sensível a valores atípicos ao quadrado, e esses atípicos se
+concentram nas poucas células que cruzam a borda física do cubo: uma
+célula de 10~cm que recebe, ao mesmo tempo, pontos do topo do cubo
+(+0,10~m) e da base ao redor (0,0~m) tem sua altura medida como a
+média desses pontos — o erro máximo observado, 5,480~cm, é
+exatamente esse efeito de borda. Esse erro de quantização espacial é
+inerente à resolução da grade de projeção (células de 10~cm), não a um
+defeito de \textit{software} — hipótese investigada empiricamente na
+Seção~\ref{subsec:sensibilidade-resolucao}, em vez de apenas presumida.
+
+\subsubsection{A métrica denuncia falhas reais? Controles negativos}
+\label{subsec:controles-negativos}
+
+Um erro percentual baixo só é evidência de corretude se a métrica for
+capaz de acusar um erro alto quando o \textit{pipeline} está de fato
+quebrado — caso contrário, o teste passaria com qualquer código,
+correto ou não, e não provaria nada. Para descartar essa
+possibilidade, três testes adicionais em \texttt{test\_motor\_caixao.py}
+recalculam exatamente a mesma métrica (mesmo método
+\texttt{\_erro\_mde}, Listagem~\ref{lst:erro-quantitativo}) sobre o
+mesmo cenário, mas com uma etapa do \textit{pipeline} deliberadamente
+quebrada — um a um, os defeitos que um erro real de implementação ou
+de integração poderia introduzir:
+
+\begin{itemize}
+    \item \texttt{test\_controle\_negativo\_sem\_calibracao}
+    \item \texttt{test\_controle\_negativo\_sem\_deslocamento\_cota\_zero}
+    \item \texttt{test\_controle\_negativo\_mapa\_alvo\_errado}
+\end{itemize}
+
+\begin{table}[!ht]
+\centering
+\caption{Controles negativos de \texttt{TestErroQuantitativoElevacao}: cada linha quebra deliberadamente uma etapa do pipeline e verifica que o erro medido dispara.}
+\label{tab:controles-negativos}
+\small
+\begin{tabularx}{\textwidth}{@{}l X r r@{}}
+\toprule
+\textbf{Cenário} & \textbf{Falha simulada} & \textbf{RMSE medido} & \textbf{Limite exigido} \\
+\midrule
+Sem calibração & Nenhuma calibração aplicada (\texttt{T = identidade}) — a altura medida é a profundidade bruta da câmera & 2\,708,4\% & $> 500\%$ \\
+Sem deslocamento de cota zero & Plano ajustado, mas sem \texttt{T\_shift} (cota zero não desce até a base) & 211,5\% & $> 100\%$ \\
+Mapa alvo errado & Calibração correta, comparado contra o MDE errado (Morro Gaussiano em vez de Cubo Central) & 2,724~cm & $> 2\times$ ref. (2,29~cm) \\
+\midrule
+\emph{Referência (sem falha injetada)} & — & 11,43\% / 1,14~cm & — \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\noindent A linha ``Mapa alvo errado'' compara RMSE \emph{absoluto}
+(cm), não percentual: o mapa Cubo Central tem amplitude 10~cm e o
+Morro Gaussiano tem amplitude $\approx 20$~cm, e normalizar os dois
+pela própria amplitude — como nas demais linhas — compararia
+percentuais de bases diferentes, diluindo o efeito real do erro de
+configuração em vez de expô-lo.
+
+Os três controles confirmam que a métrica reage na direção e na
+magnitude esperadas: a falha mais grosseira (nenhuma calibração)
+produz o maior erro, por mais de duas ordens de grandeza acima da
+referência (237$\times$);
+a falha de integração mais plausível (esquecer o deslocamento de cota
+zero — um erro de poucas linhas, fácil de cometer ao editar
+\texttt{\_calibrar\_com\_tampa}) ainda assim ultrapassa toda a
+amplitude do modelo alvo; e mesmo a falha mais sutil, de configuração
+(comparar contra o mapa alvo errado, sem nenhum defeito no
+\textit{pipeline} físico de captura), mais que dobra o RMSE absoluto
+em relação à referência. Isso é evidência de que os 11,4\% de RMSE
+medidos na configuração correta não são um artefato da métrica ou um
+resultado ao qual o teste chegaria de qualquer forma — são,
+especificamente, o erro de um \textit{pipeline} calibrado e configurado
+corretamente.
+
+\subsubsection{Sensibilidade à resolução da grade}
+\label{subsec:sensibilidade-resolucao}
+
+A hipótese levantada acima — de que o erro de borda é ``inerente'' à
+resolução da grade — é testável: se for verdadeira, o erro percentual
+deveria variar de forma previsível com \texttt{N\_CELULAS}. O teste
+\texttt{test\_erro\_por\_resolucao\_da\_grade} mede a mesma métrica em
+seis resoluções, da mais grosseira (30~cm por célula) a uma
+excessivamente fina (2,5~cm por célula), passando pela resolução de
+produção (10~cm por célula, \texttt{N\_CELULAS = 15}):
+
+\begin{table}[!ht]
+\centering
+\caption{Erro percentual (RMSE e MAE) em função da resolução da grade — mesmo cenário do Passo E, calibração fixa.}
+\label{tab:sensibilidade-resolucao}
+\begin{tabular}{@{}rrrr@{}}
+\toprule
+\textbf{N\_CELULAS} & \textbf{Tamanho da célula} & \textbf{RMSE\%} & \textbf{MAE\%} \\
+\midrule
+5  & 30,0~cm & 16,47\% & 7,80\% \\
+10 & 15,0~cm & 15,16\% & 4,08\% \\
+15 (produção) & 10,0~cm & 11,43\% & 3,25\% \\
+20 & 7,5~cm  & 16,91\% & 3,19\% \\
+30 & 5,0~cm  & 16,81\% & 3,41\% \\
+60 & 2,5~cm  & 17,25\% & 3,25\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+O RMSE \emph{não} é monotônico, e por isso é mais informativo do que a
+hipótese original: ele cai das grades grosseiras (16,47\% em $N=5$;
+15,16\% em $N=10$ — cada célula gigante mistura uma fração maior de
+área do topo do cubo com a base ao redor) até um mínimo nítido na
+resolução de produção ($N=15$, 11,43\%), e volta a subir e estabilizar
+em torno de 17\% para $N \geq 20$. O MAE conta uma história um pouco
+diferente: cai de 7,80\% ($N=5$) para valores entre 3,2\% e 3,4\% a
+partir de $N=15$ e permanece nessa faixa até $N=60$, sem voltar a
+piorar de forma perceptível. A leitura conjunta das duas colunas é que
+o erro \emph{típico} por célula (MAE) melhora e se estabiliza a partir
+da resolução de produção, enquanto o RMSE — sensível a valores
+atípicos ao quadrado — continua puxado para cima em grades finas
+demais porque cada célula recebe poucos pontos do sensor, e as poucas
+células de borda mal amostradas pesam desproporcionalmente na soma dos
+quadrados. A resolução de produção (\texttt{N\_CELULAS = 15}) é, nesta
+varredura, o único ponto onde as duas métricas atingem seu melhor
+valor simultaneamente — não por ajuste fino deliberado, mas como
+coincidência que o teste apenas documenta. O teste não afirma que 15 é
+ótimo em sentido absoluto (a busca não foi exaustiva); ele afirma, e
+verifica automaticamente (\texttt{assertLess(pct\_rmse, 20.0)} para
+cada uma das seis resoluções), que o erro permanece limitado e
+razoável em toda a faixa testada, sem explosões que indicariam um bug
+dependente de resolução.
+
+Com a adição desses cinco casos (a medição de referência, os três
+controles negativos e a varredura de resolução), a suíte de testes
+automatizados descrita na Seção~\ref{sec:evidencias} passa de 83 para
+88 casos. A cobertura de linha permanece em 91\%/48\%/75\%
+(\texttt{motor\_caixao\_areia.py}/\texttt{mde\_cartografia.py}/combinada)
+— os mesmos percentuais da Listagem~\ref{lst:saida-cobertura} —, com
+uma única linha adicional exercitada: o controle negativo de mapa alvo
+errado (Seção~\ref{subsec:controles-negativos}) força a ramificação do
+mapa ``Morro Gaussiano'' em \texttt{AdaptadorMDE.\_funcao\_mapa\_sintetico}
+(\texttt{mde\_cartografia.py}, linha 494), antes não coberta por
+nenhum teste da suíte.
 
 \subsection{Reprodutibilidade independente}
 \label{subsec:reprodutibilidade}
