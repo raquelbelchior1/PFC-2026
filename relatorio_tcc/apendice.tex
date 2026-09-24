@@ -61,9 +61,10 @@ Para executar a suíte de testes unitários:
 python -m unittest test_motor_caixao -v
 \end{lstlisting}
 
-\noindent Saída esperada: \texttt{83 passed} (com Open3D instalado; na
-ausência da biblioteca, \texttt{TestLeituraRGBD} é ignorado e a suíte
-reporta \texttt{82 passed, 1 skipped}).
+\noindent Saída esperada: \texttt{88 passed}, com Open3D instalado.
+Na ausência dessa biblioteca, o teste \texttt{TestLeituraRGBD} é
+ignorado automaticamente, e a suíte reporta \texttt{87 passed} e
+\texttt{1 skipped}.
 
 Para forçar o modo simulação mesmo com Kinect conectado, editar no
 topo do arquivo \texttt{main.py}:

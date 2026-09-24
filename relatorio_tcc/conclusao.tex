@@ -21,7 +21,7 @@ fornecido em formato GeoTIFF, com tolerância vertical explícita; e
 dados cartográficos.
 
 O motor matemático foi desenvolvido sob a metodologia de
-\textit{Test-Driven Development}, resultando em uma suíte com 83
+\textit{Test-Driven Development}, resultando em uma suíte com 88
 testes unitários automatizados que verificam — com valores numéricos
 explícitos e auditáveis — todos os contratos algébricos do sistema,
 da calibração RANSAC + SVD ao teste de aceitação de ponta a ponta.
@@ -69,7 +69,7 @@ Capítulo~\ref{cap:intro} foram atendidos:
           como item de verificação futura (Seção~\ref{sec:trabalhos-futuros});
     \item Discretização em malha com renderização por \texttt{cv2.fillPoly};
     \item Emulador interativo via \texttt{cv2.setMouseCallback};
-    \item Suíte de 83 testes unitários, todos aprovados;
+    \item Suíte de 88 testes unitários, todos aprovados;
     \item Documentação tripla (acadêmica, prática e relatório ABNT).
 \end{enumerate}
 
@@ -87,6 +87,16 @@ seguintes frentes:
           versionado no repositório (\texttt{25S51\_ZN.tif}) e valide a
           interpolação bilinear contra valores conhecidos da grade
           fecharia essa lacuna de cobertura.
+    \item[Validação do erro quantitativo do MDE com ruído real de
+          sensor.] O erro medido na Seção~\ref{subsec:erro-quantitativo-mde}
+          (RMSE de 11,4\%) usa uma nuvem sintética livre de ruído — o
+          único erro presente é a quantização geométrica da grade. O
+          Kinect real introduz ruído próprio de profundidade,
+          tipicamente mais acentuado nas bordas de objetos, que essa
+          medição não captura; repetir a mesma análise com nuvens
+          capturadas por hardware real, e para o mapa Morro Gaussiano
+          além do Cubo Central, forneceria uma cota superior de erro
+          mais realista.
     \item[Reconstrução do caixão de teste e nova demonstração física
           integral.] Corrigir o recorte da estrutura de madeira que
           hoje tampa parcialmente o campo de visão do sensor

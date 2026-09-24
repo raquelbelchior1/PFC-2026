@@ -295,11 +295,17 @@ largura do projetor em pixels — exposto ao operador por um controle
 deslizante na GUI e por um \textit{trackbar} na janela
 \texttt{Gabarito\_MDE} durante a calibração, permitindo corrigi-lo caso
 a otimização convirja para um mínimo local incorreto). Esse caminho
-alternativo é exercitado pelas classes de teste
-\texttt{TestCalibracaoProjetorOpenCV}, \texttt{TestGeracaoTabuleiro},
-\texttt{TestCantosParaPontosMesa} e
-\texttt{TestPipelineCalibracaoProjetor} (Capítulo~\ref{cap:resultados}),
-mas permanece inativo por padrão: a configuração corrente do
+alternativo é exercitado por quatro classes de teste dedicadas
+(Capítulo~\ref{cap:resultados}):
+
+\begin{itemize}
+    \item \texttt{TestCalibracaoProjetorOpenCV}
+    \item \texttt{TestGeracaoTabuleiro}
+    \item \texttt{TestCantosParaPontosMesa}
+    \item \texttt{TestPipelineCalibracaoProjetor}
+\end{itemize}
+
+\noindent mas permanece inativo por padrão: a configuração corrente do
 sistema opera com os parâmetros analíticos da
 Equação~\eqref{eq:fxfy-virtual}, reservando a rotina empírica para o
 cenário de montagem não idealizada.
@@ -353,7 +359,7 @@ coplanares (a maioria dos testes unitários do motor matemático); RANSAC
 seguido de SVD para qualquer nuvem capturada por hardware real, na qual
 a presença de outliers geométricos é a regra, não a exceção.
 
-\noindent Essa decisão é validada empiricamente: a suíte de 83 testes
+\noindent Essa decisão é validada empiricamente: a suíte de 88 testes
 unitários do motor matemático passa integralmente, incluindo os cinco
 casos dedicados especificamente ao RANSAC (\texttt{TestRANSAC}) e os
 oito casos da calibração pela tampa (\texttt{TestCalibracaoTampa}), com

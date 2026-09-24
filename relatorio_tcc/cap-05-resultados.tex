@@ -29,9 +29,9 @@ testes unitários escritos previamente, com valores numéricos
 cresceu ao longo do projeto à medida que novas etapas do
 \textit{pipeline} foram implementadas — da versão inicial com 26 casos
 (cobrindo apenas SVD, Gram-Schmidt, transformação afim, projeção Tsai e
-regra de cor) até a suíte atual, com 83 testes. Para deixar
+regra de cor) até a suíte atual, com 88 testes. Para deixar
 explícito o que cada teste verifica, a Tabela~\ref{tab:tests}
-agrupa as 22 classes em cinco frentes funcionais do \textit{pipeline},
+agrupa as 23 classes em cinco frentes funcionais do \textit{pipeline},
 em vez de listá-las na ordem em que aparecem no código-fonte.
 
 \begin{table}[!ht]
@@ -78,9 +78,10 @@ em vez de listá-las na ordem em que aparecem no código-fonte.
 \texttt{TestRenderizacaoGrade}       & Rasterização \texttt{cv2.fillPoly}              & 2 \\
 \texttt{TestPipeline}                & Integração Passos 1+2                           & 2 \\
 \texttt{TestFluxoAceitacao}          & Aceitação ponta a ponta (Seção~\ref{sec:aceitacao}) & 1 \\
-\emph{Subtotal} & & \emph{6} \\
+\texttt{TestErroQuantitativoElevacao} & Erro do MDE antes da coloração (Seção~\ref{subsec:erro-quantitativo-mde}) & 5 \\
+\emph{Subtotal} & & \emph{11} \\
 \midrule
-\textbf{Total}                        & \multicolumn{2}{r}{\textbf{83}}                \\
+\textbf{Total}                        & \multicolumn{2}{r}{\textbf{88}}                \\
 \bottomrule
 \end{tabularx}
 \end{table}
@@ -121,7 +122,7 @@ do plano horizontal $z = 5$ é resumido como:
 \end{lstlisting}
 
 A execução completa (\texttt{python -m unittest test\_motor\_caixao -v})
-reporta 83 testes aprovados, nenhuma falha. O único teste
+reporta 88 testes aprovados, nenhuma falha. O único teste
 condicional da suíte, \texttt{TestLeituraRGBD}, é ignorado apenas em
 ambientes sem a biblioteca Open3D instalada; no ambiente de validação
 deste trabalho, Open3D estava presente e o teste foi executado
@@ -194,8 +195,15 @@ metodologia TDD declarada na Seção~\ref{sec:tdd}. A
 Figura~\ref{fig:crescimento-suite} traça essa evolução a partir do
 histórico real de \emph{commits} do repositório que tocaram o arquivo
 \texttt{test\_motor\_caixao.py}: de 26 testes na primeira versão
-funcional (abril/2026) até os 83 testes atuais (agosto/2026), sem
-nenhum retrocesso no total — evidência de que cada nova capacidade do
+funcional (abril/2026) até os 83 testes de agosto/2026 — marco em que
+o gráfico e a Listagem~\ref{lst:saida-testes} abaixo foram capturados
+—, sem nenhum retrocesso no total. Cinco casos adicionais
+(\texttt{TestErroQuantitativoElevacao}, Seção~\ref{subsec:erro-quantitativo-mde})
+foram incorporados posteriormente, em setembro/2026, elevando a suíte
+aos 88 testes já refletidos na Tabela~\ref{tab:tests} acima; o gráfico
+de evolução não foi reprocessado para incluir esse ponto adicional.
+Em qualquer um dos dois marcos, a evidência é a mesma: cada nova
+capacidade do
 \textit{pipeline} (calibração por RANSAC, calibração empírica do
 projetor, persistência em JSON, mapa Morro Gaussiano etc.) veio
 acompanhada de sua própria verificação automatizada, em vez de testes
@@ -211,7 +219,9 @@ histórico de \emph{commits} do repositório que modificaram
 \end{figure}
 
 A Figura~\ref{fig:testes-frente} traduz em gráfico a mesma distribuição
-por frente funcional já detalhada na Tabela~\ref{tab:tests}, deixando
+por frente funcional detalhada na Tabela~\ref{tab:tests} no marco de
+agosto/2026 (83 testes, antes da nova classe de testes incorporada à
+quinta frente — Seção~\ref{subsec:erro-quantitativo-mde}), deixando
 visualmente claro que nenhuma etapa do \textit{pipeline} — da
 calibração geométrica à rasterização final — ficou sem cobertura de
 teste dedicada.
@@ -220,14 +230,16 @@ teste dedicada.
 \centering
 \includegraphics[width=0.85\textwidth]{img/grafico_testes_por_frente.png}
 \caption{Distribuição dos 83 testes unitários pelas cinco frentes
-funcionais do \textit{pipeline} (mesmos dados da Tabela~\ref{tab:tests}).}
+funcionais do \textit{pipeline} no marco de agosto/2026 (Tabela~\ref{tab:tests}
+reflete os 88 testes atuais, incluindo os 5 casos incorporados depois
+deste gráfico ter sido gerado).}
 \label{fig:testes-frente}
 \end{figure}
 
 A execução completa e literal, capturada diretamente do terminal no
 ambiente de validação deste trabalho, é reproduzida na
 Listagem~\ref{lst:saida-testes} — sem nenhuma edição além da omissão
-das 83 linhas individuais \texttt{ok} por brevidade editorial (todas
+das 88 linhas individuais \texttt{ok} por brevidade editorial (todas
 presentes na execução real, cada uma identificando o teste
 correspondente).
 
@@ -235,12 +247,12 @@ correspondente).
 $ python -m unittest test_motor_caixao -v
 test_plano_horizontal_z5 (test_motor_caixao.TestAjustePlano) ... ok
 test_plano_inclinado_simples (test_motor_caixao.TestAjustePlano) ... ok
-[... 79 testes intermediarios omitidos (todos "ok") ...]
+[... 84 testes intermediarios omitidos (todos "ok") ...]
 test_pixel_verde_e_vermelho_em_celulas_distintas
     (test_motor_caixao.TestRenderizacaoGrade) ... ok
 
 ----------------------------------------------------------------------
-Ran 83 tests in 2.264s
+Ran 88 tests in 1.879s
 
 OK
 \end{lstlisting}
@@ -545,7 +557,7 @@ inerente à resolução da grade de projeção (células de 10~cm), não a um
 defeito de \textit{software} — hipótese investigada empiricamente na
 Seção~\ref{subsec:sensibilidade-resolucao}, em vez de apenas presumida.
 
-\subsubsection{A métrica denuncia falhas reais? Controles negativos}
+\subsubsection{Capacidade da métrica de denunciar falhas reais: controles negativos}
 \label{subsec:controles-negativos}
 
 Um erro percentual baixo só é evidência de corretude se a métrica for
@@ -674,7 +686,7 @@ nenhum teste da suíte.
 \subsection{Reprodutibilidade independente}
 \label{subsec:reprodutibilidade}
 
-Todos os números apresentados nesta seção — 83/83 testes aprovados,
+Todos os números apresentados nesta seção — 88/88 testes aprovados,
 91\%/48\%/75\% de cobertura, os tempos de execução — são
 reproduzíveis por qualquer terceiro, em qualquer máquina com Python
 3.11+ e as dependências de \texttt{requirements.txt}, com apenas dois
@@ -747,7 +759,7 @@ campo anteriores (Seção~\ref{sec:funcional}, ``Modo real''), inclusive
 no episódio em que um defeito de calibração genuíno foi identificado e
 corrigido a partir de dados de sensor real (Seção~\ref{sec:correcao},
 Figura~\ref{fig:bug}); e é validado, de forma completa, determinística
-e independente de qualquer hardware, pelos 83 testes automatizados
+e independente de qualquer hardware, pelos 88 testes automatizados
 detalhados nesta seção — incluindo o teste de ponta a ponta
 (Seção~\ref{subsec:unit-vs-e2e}) que reproduz \emph{byte a byte} o
 mesmo cenário de aceitação com uma nuvem de profundidade sintética
@@ -887,9 +899,10 @@ Figura~\ref{fig:bug} ilustra o sintoma observado.
 \centering
 \includegraphics[width=0.7\textwidth]{img/bug_calibracao.png}
 \caption{Reconstituição do defeito de calibração (versão 3.0), obtida
-executando o próprio \textit{pipeline} de renderização de produção
-(\texttt{gerar\_imagem\_grade\_cores}) com os parâmetros \textit{mock}
-de projetor então usados em modo real ($f_x = f_y = 500$,
+executando o próprio \texttt{gerar\_imagem\_grade\_cores} — o mesmo
+\textit{pipeline} de renderização de produção — com os parâmetros
+provisórios de projetor então usados em modo real, apenas para
+simulação ($f_x = f_y = 500$,
 $c_x = 320$, $c_y = 240$, $\mathbf{t}_{\text{ext}} = (0,0,1)^{T}$):
 apenas uma fração da janela é preenchida pela malha, o restante
 permanece preto. Não é a captura de tela original do incidente de
