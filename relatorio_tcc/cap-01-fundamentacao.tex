@@ -107,13 +107,14 @@ retomada como trabalho futuro na Conclusão.
 
 O sensor apresenta ruído gaussiano cujo desvio padrão cresce
 quadraticamente com a profundidade. Na faixa de operação adotada
-(2--3~m, com o sensor a 2,5~m da mesa), valores típicos situam-se entre
-$\sigma \approx 2$ e $\sigma \approx 4$~mm por \textit{pixel}. Esse
-ruído justifica a estratégia de agregação espacial
-(Capítulo~\ref{cap:rendering}): ao se calcular a média de $n$ pontos por
-célula da malha, o desvio padrão do estimador da altura é reduzido
-para $\sigma_{\bar{Z}} = \sigma / \sqrt{n}$, conforme o
-\textit{Central Limit Theorem}.
+(2--3~m, com o sensor a 2,5~m da mesa), valores típicos situam-se
+entre $\sigma \approx 2$ e $\sigma \approx 4$~mm por \textit{pixel}.
+Esse ruído justifica a estratégia de agregação espacial (Capítulo~\ref{cap:rendering}):
+ao se calcular a média de $n$ pontos por célula da malha, o desvio padrão do estimador
+da altura é reduzido para $\sigma_{\bar{Z}} = \sigma / \sqrt{n}$. Além disso, para $n$
+suficientemente grande, a distribuição da média amostral aproxima-se de
+uma distribuição normal, conforme estabelecido pelo Teorema Central do
+Limite~\cite{casella2002statistical}.
 
 \section{Modelo de Câmera Pinhole e Calibração de Tsai}
 \label{sec:pinhole}
@@ -171,7 +172,7 @@ do plano que melhor se ajusta à nuvem de pontos centralizada
 
 O ajuste de plano por SVD (Seção~\ref{subsec:svd}) é um estimador de
 mínimos quadrados: minimiza a soma dos quadrados das distâncias
-de \emph{todos} os pontos da nuvem ao plano, e por isso é sensível a
+de todos os pontos da nuvem ao plano, e por isso é sensível a
 \textit{outliers} — pontos que não pertencem à superfície de interesse.
 No caso de campo deste trabalho, o campo de visão do Kinect é mais largo
 que a área útil do caixão de areia, de modo que a nuvem capturada durante
@@ -179,27 +180,27 @@ a calibração inclui, além da superfície de referência, a moldura de
 madeira do caixão, o piso ao redor e ruído da sala — outliers que, se
 incluídos ingenuamente no SVD, distorcem a normal calculada.
 
-O algoritmo RANSAC (\textit{Random Sample Consensus}), proposto
+O algoritmo RANSAC (\textit{RANdom SAmple Consensus}), proposto
 por Fischler e Bolles~\citeonline{fischler1981random}, resolve esse problema por
 amostragem aleatória repetida. Dada uma nuvem de $N$ pontos, cada
 iteração executa três passos: (i) sorteiam-se $k$ pontos mínimos
 necessários para definir o modelo — no caso de um plano, $k = 3$; (ii)
 constrói-se o modelo candidato a partir desses pontos; (iii) conta-se o
-número de inliers — pontos da nuvem inteira cuja distância ao
+número de \textit{inliers} — pontos da nuvem inteira cuja distância ao
 modelo candidato é inferior a um limiar $d_{\text{in}}$. Após um número
-fixo de iterações, o modelo com maior número de inliers é escolhido como
+fixo de iterações, o modelo com maior número de \textit{inliers} é escolhido como
 vencedor. Diferentemente do SVD, o RANSAC não assume que a maioria dos
 pontos seja bem descrita por um único modelo suave; ele explicitamente
-\emph{separa} a nuvem em inliers e outliers, sendo tolerante a frações
+separa a nuvem em \textit{inliers} e \textit{outliers}, sendo tolerante a frações
 significativas de dados espúrios, desde que o conjunto de inliers
 permaneça majoritário dentro da amostra observada.
 
 Neste trabalho, o RANSAC não substitui o SVD, mas o precede: o
-plano vencedor do RANSAC delimita o conjunto de inliers (presumivelmente
+plano vencedor do RANSAC delimita o conjunto de \textit{inliers} (presumivelmente
 a superfície de referência plana), e apenas esses pontos alimentam o
 refinamento por mínimos quadrados via SVD, que produz a normal final com
 precisão sub-milimétrica. Essa combinação — robustez do RANSAC seguida
-da precisão do SVD sobre os inliers selecionados — é detalhada, com a
+da precisão do SVD sobre os \textit{inliers} selecionados — é detalhada, com a
 formalização algébrica completa e sua aplicação à calibração
 Kinect~$\to$~Mesa, na Seção~\ref{sec:passo1}.
 

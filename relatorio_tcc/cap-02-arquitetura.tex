@@ -29,7 +29,7 @@ domínio:
           entre a captura e a projeção.
     \item[Simplicidade de \textit{deploy}.] Um único ponto de entrada
           (\texttt{main.py}) e um conjunto fixo de dependências
-          permitem operação \textit{plug \& play} em qualquer máquina
+          permitem operação \textit{plug and play} em qualquer máquina
           Windows ou Linux com Python e OpenCV instalados — condição
           explorada ao máximo pelo instalador offline descrito na
           Seção~\ref{subsec:instalador}.
@@ -41,16 +41,18 @@ domínio:
 \subsection{Instalador \textit{offline} para Windows}
 \label{subsec:instalador}
 
-A operação em unidades de instrução militar não pode presumir a
-presença de pessoal com formação em desenvolvimento de \textit{software}
-capaz de configurar um ambiente Python do zero, tampouco conectividade
-constante à internet para \texttt{pip install}. Para eliminar essa
-barreira de adoção, o projeto inclui, na pasta \texttt{installer/} do
-repositório (Anexo~A), um instalador único e 100\% offline
-para Windows 10/11 de 64~\textit{bits}, gerado com o
-Inno~Setup a partir do script \texttt{ARSandbox.iss}. Em uma
-máquina limpa, sem qualquer pré-requisito além do próprio Windows, o
-instalador executa automaticamente, em sequência:
+A operação em unidades de instrução militar deve considerar a possibilidade
+de que o sistema seja utilizado por pessoal sem formação específica em desenvolvimento
+de \textit{software}, bem como em ambientes sem conectividade constante à internet.
+Nesse contexto, a configuração manual do ambiente Python e a instalação de suas dependências
+podem representar uma barreira à utilização do sistema, uma vez que o comando \texttt{pip install},
+utilizado para obter e instalar pacotes de software a partir de um repositório, normalmente
+requer acesso à internet. Para eliminar essa barreira e simplificar a implantação, o projeto inclui,
+na pasta \texttt{installer/} do repositório (Anexo~A), um instalador único e totalmente offline para
+o sistema operacional Windows 10/11 de 64~\textit{bits}, gerado com o Inno~Setup a partir do script
+\texttt{ARSandbox.iss}. Em um computador que possua apenas o sistema operacional Windows, sem os demais
+pré-requisitos necessários à execução do sistema, o instalador realiza automaticamente, em sequência:
+
 
 \begin{enumerate}
     \item Copia o código-fonte, o mapa GeoTIFF de exemplo e a
@@ -81,7 +83,7 @@ instalador executa automaticamente, em sequência:
 \noindent O resultado é que um instrutor da Seção de Simulação da AMAN,
 sem qualquer conhecimento prévio de Python, consegue colocar o sistema
 em operação executando um único instalador e clicando em ``Avançar'' —
-o mesmo princípio de \textit{plug \& play} que orienta a cadeia de
+o mesmo princípio de \textit{plug and play} que orienta a cadeia de
 \textit{fallback} do sensor (Seção~\ref{subsec:fallback}) aplicado,
 aqui, à própria instalação do \textit{software}.
 
@@ -330,4 +332,4 @@ catastroficamente por ausência de hardware: o quarto nível
 quaisquer recursos externos. Garantia análoga aplica-se ao
 \texttt{AdaptadorMDE}: na ausência ou falha de leitura do GeoTIFF, é
 gerada uma superfície gaussiana sintética que assegura visualização
-significativa para a banca.
+significativa para a audiência.
