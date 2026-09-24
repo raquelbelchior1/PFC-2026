@@ -1,0 +1,879 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Guia Completo de Apresentação — Caixão de Areia com Realidade Aumentada</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Segoe UI', Arial, sans-serif;
+    font-size: 11pt;
+    line-height: 1.6;
+    color: #1a1a1a;
+    background: #fff;
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 20px 30px;
+  }
+  @media print {
+    body { max-width: 100%; padding: 10px 20px; font-size: 10pt; }
+    .no-break { page-break-inside: avoid; }
+    .page-break { page-break-before: always; }
+    h1.capa { page-break-after: always; }
+  }
+
+  h1.capa {
+    text-align: center; font-size: 22pt; color: #1a3a5c;
+    margin: 60px 0 20px; border-bottom: 4px solid #1a3a5c; padding-bottom: 16px;
+  }
+  .capa-sub { text-align: center; font-size: 13pt; color: #555; margin-bottom: 40px; }
+  .capa-info {
+    background: #f0f4fa; border-left: 5px solid #1a3a5c;
+    padding: 18px 24px; margin: 30px 0; border-radius: 0 8px 8px 0;
+  }
+
+  h2 { font-size: 16pt; color: #1a3a5c; margin: 36px 0 14px; border-bottom: 2px solid #d0dcea; padding-bottom: 6px; }
+  h3 { font-size: 13pt; color: #c0392b; margin: 28px 0 10px; }
+  h4 { font-size: 11pt; color: #2c5f2e; margin: 18px 0 8px; font-weight: 700; }
+
+  .slide-card { border: 1.5px solid #c8d6e5; border-radius: 8px; margin: 24px 0; overflow: hidden; }
+  .slide-header {
+    background: #1a3a5c; color: #fff; padding: 10px 18px;
+    font-weight: 700; font-size: 12pt;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .slide-header .tempo { font-size: 10pt; background: rgba(255,255,255,0.2); padding: 2px 10px; border-radius: 12px; }
+  .slide-header .apresentador { font-size: 9pt; background: #e74c3c; padding: 2px 10px; border-radius: 12px; margin-right: 8px; }
+  .slide-header .apresentador.eng { background: #8e44ad; }
+  .slide-body { padding: 16px 20px; }
+
+  .bloco-visual { background: #f8faff; border-left: 4px solid #3498db; padding: 12px 16px; margin: 12px 0; border-radius: 0 6px 6px 0; }
+  .bloco-fala { background: #f0fff4; border-left: 4px solid #2ecc71; padding: 12px 16px; margin: 12px 0; border-radius: 0 6px 6px 0; }
+  .bloco-tecnico { background: #fffbf0; border-left: 4px solid #f39c12; padding: 12px 16px; margin: 12px 0; border-radius: 0 6px 6px 0; }
+  .bloco-alerta { background: #fff5f5; border-left: 4px solid #e74c3c; padding: 12px 16px; margin: 12px 0; border-radius: 0 6px 6px 0; }
+  .bloco-engcomp { background: #f5f0ff; border-left: 4px solid #8e44ad; padding: 12px 16px; margin: 12px 0; border-radius: 0 6px 6px 0; }
+
+  .bloco-label { font-size: 9pt; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+  .bloco-visual .bloco-label { color: #2980b9; }
+  .bloco-fala .bloco-label { color: #27ae60; }
+  .bloco-tecnico .bloco-label { color: #d68910; }
+  .bloco-alerta .bloco-label { color: #c0392b; }
+  .bloco-engcomp .bloco-label { color: #8e44ad; }
+
+  table { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: 10pt; }
+  th { background: #1a3a5c; color: #fff; padding: 8px 12px; text-align: left; }
+  td { border: 1px solid #d0dcea; padding: 7px 12px; }
+  tr:nth-child(even) td { background: #f5f8fc; }
+
+  code { background: #f0f0f0; padding: 1px 6px; border-radius: 3px; font-family: 'Consolas', monospace; font-size: 10pt; }
+  pre { background: #1e1e2e; color: #cdd6f4; padding: 14px 18px; border-radius: 6px; font-family: 'Consolas', monospace; font-size: 10pt; overflow-x: auto; margin: 12px 0; }
+
+  .tag-verde { color: #fff; background: #27ae60; padding: 2px 8px; border-radius: 4px; font-size: 9pt; }
+  .tag-azul { color: #fff; background: #2980b9; padding: 2px 8px; border-radius: 4px; font-size: 9pt; }
+  .tag-vermelho { color: #fff; background: #c0392b; padding: 2px 8px; border-radius: 4px; font-size: 9pt; }
+  .tag-roxo { color: #fff; background: #8e44ad; padding: 2px 8px; border-radius: 4px; font-size: 9pt; }
+
+  ul, ol { padding-left: 22px; margin: 8px 0; }
+  li { margin-bottom: 4px; }
+  p { margin: 8px 0; }
+
+  .numero-destaque { font-size: 28pt; font-weight: 900; color: #1a3a5c; text-align: center; margin: 10px 0; }
+  .numero-sub { text-align: center; color: #555; font-size: 10pt; margin-bottom: 10px; }
+
+  .quadro-cronograma { background: #1a3a5c; color: white; padding: 16px 20px; border-radius: 8px; margin: 20px 0; }
+  .quadro-cronograma table th { background: rgba(255,255,255,0.2); }
+  .quadro-cronograma table td { border-color: rgba(255,255,255,0.2); color: white; }
+  .quadro-cronograma table tr:nth-child(even) td { background: rgba(255,255,255,0.05); }
+
+  .banner-engcomp {
+    background: linear-gradient(135deg, #8e44ad, #1a3a5c);
+    color: white; padding: 10px 18px; border-radius: 6px;
+    font-weight: 700; font-size: 11pt; margin: 20px 0 8px;
+  }
+</style>
+</head>
+<body>
+
+<!-- CAPA -->
+<h1 class="capa">Guia Completo de Apresentação</h1>
+<p class="capa-sub">Caixão de Areia com Realidade Aumentada<br>
+Sistema de Baixo Custo Computacional para Apoio à Instrução Militar — AMAN<br>
+<strong>Instituto Militar de Engenharia (IME) — 2026</strong></p>
+
+<div class="capa-info">
+  <strong>Para que serve este guia:</strong> Explicar <em>o quê</em> é cada parte do projeto, <em>por que</em> foi feita assim, e <em>o que falar</em> em cada slide da apresentação <strong>SlidesVCPFC.pptx</strong>.<br><br>
+  Os blocos <span class="tag-roxo">ENGENHARIA DA COMPUTAÇÃO / ELETRÔNICA</span> são conteúdo exclusivo da sua parte — leia com atenção redobrada esses blocos.
+</div>
+
+<p><strong>Equipe:</strong> Rafael Schuinki · Raquel Belchior &nbsp;|&nbsp; <strong>Orientação:</strong> IME &nbsp;|&nbsp; <strong>Parceiro:</strong> Seção de Simulação — AMAN</p>
+
+<!-- ===================== PARTE 1 ===================== -->
+<h2>PARTE 1 — O QUE É O PROJETO E POR QUÊ ELE EXISTE</h2>
+
+<h3>1.1 O Problema Real</h3>
+<p>A Seção de Simulação da AMAN usa <strong>maquetes físicas de terreno</strong> para treinar cadetes em leitura de carta topográfica, planejamento tático e exercícios de Comando e Estado-Maior. O problema é que essas maquetes são <strong>estáticas</strong>: se você cavar uma trincheira ou construir um muro na areia, não tem como saber automaticamente se aquilo corresponde ao terreno real de referência. Tudo era feito "no olho".</p>
+
+<p>Soluções de <em>AR Sandbox</em> já existem no mundo acadêmico, como o <strong>SARndbox da UC Davis</strong>. O problema: foram feitas para computadores modernos com <strong>GPU dedicada</strong>. O parque da AMAN usa hardware legado, sem GPU.</p>
+
+<div class="bloco-alerta">
+  <div class="bloco-label">⚠ Por que não usar a solução pronta?</div>
+  Hardware moderno com GPU é caro e precisa de manutenção especializada. A AMAN precisava de algo que funcionasse nos computadores que já tinha. <strong>Essa é a razão de existir do projeto.</strong>
+</div>
+
+<h3>1.2 O Que o Sistema Faz — Resumo em 4 Passos</h3>
+<ol>
+  <li><strong>Captura:</strong> Um sensor Kinect mede a distância de cada ponto da areia.</li>
+  <li><strong>Compara:</strong> O sistema compara a altura real de cada ponto com um mapa de referência (MDE).</li>
+  <li><strong>Classifica:</strong> Areia alta demais → <span class="tag-vermelho">VERMELHO — Cave</span>. Baixa demais → <span class="tag-azul">AZUL — Preencha</span>. Certa → <span class="tag-verde">VERDE — OK</span>.</li>
+  <li><strong>Projeta:</strong> Um projetor lança essas cores diretamente sobre a areia em tempo real.</li>
+</ol>
+
+<h3>1.3 Por Que Funciona Sem GPU</h3>
+<p>Em vez de processar ~200.000 pontos individualmente, o sistema:</p>
+<ul>
+  <li>Agrupa pontos em <strong>900 células (grade 30×30)</strong> — 220× menos dados;</li>
+  <li>Usa no máximo <strong>3 chamadas de desenho por quadro</strong> (uma por cor);</li>
+  <li>Guarda resultados em <strong>cache</strong> para não recalcular o que não mudou;</li>
+  <li>Usa NumPy vetorizado — loops internos em C, sem overhead de Python.</li>
+</ul>
+<p>Resultado: <strong>2,57× mais rápido</strong> que a implementação inicial, sem GPU.</p>
+
+<!-- ===================== PARTE 2 ===================== -->
+<h2>PARTE 2 — CONCEITOS TÉCNICOS EXPLICADOS (Para Responder à Banca)</h2>
+
+<div class="banner-engcomp">🟣 SEÇÃO PRINCIPAL DA SUA PARTE — ENGENHARIA DA COMPUTAÇÃO / ELETRÔNICA</div>
+
+<h3>2.1 O Kinect — O Que Ele Entrega de Verdade</h3>
+
+<div class="bloco-engcomp">
+  <div class="bloco-label">🟣 Engenharia da Computação — Conceito fundamental</div>
+  <p><strong>O Kinect NÃO entrega coordenadas 3D prontas.</strong> Ele entrega um <strong>mapa de profundidade</strong>: uma imagem onde o valor de cada pixel é a distância daquele ponto até a lente, em milímetros.</p>
+  <pre>Pixel (320, 240) = 1180 mm  ← "o centro da imagem está a 1,18m de mim"
+Pixel (100, 80)  = 1310 mm  ← "esse canto está a 1,31m de mim"</pre>
+  <p>Para virar coordenada 3D <code>[X, Y, Z]</code> em metros, você precisa fazer a <strong>back-projection pinhole</strong> — processo matemático que reconstrói a posição no espaço a partir do pixel e da profundidade.</p>
+</div>
+
+<p>O Kinect v2 tem câmera de profundidade de <strong>512×424 pixels</strong>, taxa de 30fps. Os parâmetros físicos da lente (intrínsecos) são fornecidos pelo fabricante:</p>
+<table>
+  <tr><th>Parâmetro</th><th>Valor (Kinect v2)</th><th>Significado</th></tr>
+  <tr><td><code>fx, fy</code></td><td>367,35 px</td><td>Distância focal — quanto a lente "amplia" (em pixels)</td></tr>
+  <tr><td><code>cx, cy</code></td><td>260, 205 px</td><td>Ponto principal — pixel do centro óptico da imagem</td></tr>
+  <tr><td>Resolução</td><td>512 × 424 px</td><td>Grade de medições de distância</td></tr>
+  <tr><td>Faixa útil</td><td>0,5 m – 4,5 m</td><td>Fora disso, leitura inválida</td></tr>
+</table>
+
+<h3>2.2 Back-Projection Pinhole — De Pixel para Ponto 3D</h3>
+
+<div class="bloco-engcomp">
+  <div class="bloco-label">🟣 Engenharia da Computação — Como funciona</div>
+  <p>O modelo pinhole é o modelo mais simples de câmera: toda a luz passa por um único ponto (a lente) antes de atingir o sensor. Isso cria uma relação direta entre onde um ponto aparece na imagem e onde ele está no espaço.</p>
+
+  <p><strong>Fórmula direta</strong> (3D → pixel, o que a câmera faz naturalmente):</p>
+  <pre>u = fx · (X/Z) + cx      ← coluna do pixel
+v = fy · (Y/Z) + cy      ← linha do pixel</pre>
+
+  <p><strong>Back-projection</strong> (o inverso — o que o código faz):</p>
+  <pre>X = (u - cx) · Z / fx    ← metros para o lado
+Y = (v - cy) · Z / fy    ← metros para cima/baixo
+Z_mesa = -Z_real          ← inversão de sinal (ver abaixo)</pre>
+
+  <p><strong>Exemplo real para o pixel central (320, 240) com profundidade 1180mm:</strong></p>
+  <pre>X = (320 - 260) · 1.18 / 367.35 =  60 · 1.18 / 367.35 = +0.193 m
+Y = (240 - 205) · 1.18 / 367.35 =  35 · 1.18 / 367.35 = +0.112 m
+Z_mesa = -1.18 m  (antes do T_final ajustar a origem)</pre>
+
+  <p><strong>A intuição do (u − cx):</strong> mede o quanto o pixel se desvia do centro. Um pixel 60 colunas à direita do centro, com o ponto a 1,18m de distância, está 0,19m para a direita da lente no mundo real. A divisão por <code>fx</code> converte "desvio em pixels" para "desvio em metros".</p>
+</div>
+
+<div class="bloco-alerta">
+  <div class="bloco-label">⚠ Por que Z é invertido? — Ponto que mais confunde</div>
+  <p>O Kinect mede <strong>profundidade</strong> (distância do sensor): quanto mais longe o objeto, <strong>maior</strong> o valor. Mas na mesa, a areia cresce <strong>para cima</strong> (em direção ao sensor) — quanto mais areia, <strong>menor</strong> a profundidade medida.</p>
+  <p>Sem a inversão, um monte de areia apareceria com Z menor que a base vazia — um morro seria renderizado como um buraco. O <code>-Z_real</code> corrige isso: areia alta = profundidade pequena = Z_mesa grande.</p>
+</div>
+
+<h3>2.3 Os Dois Sistemas de Coordenadas — O Problema Central</h3>
+
+<div class="bloco-engcomp">
+  <div class="bloco-label">🟣 Engenharia da Computação — Por que a calibração existe</div>
+  <p>Existem <strong>dois sistemas de coordenadas completamente diferentes</strong> no mesmo espaço físico:</p>
+  <table>
+    <tr><th>Sistema do Kinect</th><th>Sistema da Mesa (o que queremos)</th></tr>
+    <tr><td>Origem: na lente do sensor</td><td>Origem: canto da caixa, na base de madeira</td></tr>
+    <tr><td>Z aponta para longe da lente (para baixo no mundo)</td><td>Z aponta para cima (mais areia = Z maior)</td></tr>
+    <tr><td>X, Y no plano do sensor</td><td>X, Y ao longo das bordas da caixa</td></tr>
+    <tr><td>Unidade: metros desde a lente</td><td>Unidade: metros desde o canto da caixa</td></tr>
+  </table>
+
+  <p>O Kinect mede um grão de areia e diz: <em>"esse ponto está a 1,18m de mim, 0,12m para minha direita"</em>. Mas o sistema AR precisa saber: <em>"esse grão está a 0,73m da borda esquerda, 0,08m acima da base de madeira"</em>.</p>
+  <p>São <strong>duas descrições do mesmo ponto físico</strong> em referenciais diferentes. <code>T_final</code> é a conta que converte uma na outra.</p>
+
+  <pre>          ● Kinect (origem na lente, 1,18m acima)
+          │
+          │  1,18 m
+          │
+     ─────┼─────────   ← borda superior (tampa de calibração)
+          │  0,20 m
+     ─────┼─────────   ← base de madeira = Z=0 da mesa
+          ↑
+     canto da caixa = X=0, Y=0 da mesa</pre>
+</div>
+
+<h3>2.4 Calibração — RANSAC + SVD + Gram-Schmidt (A Cadeia Completa)</h3>
+
+<p>Os três algoritmos são uma <strong>cadeia sequencial</strong> — cada um resolve um sub-problema diferente e passa seu resultado para o próximo:</p>
+
+<pre>RANSAC       → "quais pontos pertencem à tampa?" (filtragem)
+SVD          → "qual é o plano exato desses pontos?" (ajuste)
+Gram-Schmidt → "como transformar esse plano em referencial?" (base)</pre>
+
+<table>
+  <tr><th>Algoritmo</th><th>Entrada</th><th>O que faz</th><th>Saída</th></tr>
+  <tr>
+    <td><strong>RANSAC</strong><br>1000 iter, limiar 3cm</td>
+    <td>Nuvem completa<br>(tampa + moldura + piso + ruído)</td>
+    <td>Sorteia 3 pontos, define plano candidato, conta inliers a &lt;3cm. Repete 1000×. Guarda o melhor.</td>
+    <td>Máscara booleana: quais pontos são da tampa</td>
+  </tr>
+  <tr>
+    <td><strong>SVD</strong><br>(Decomposição em Valores Singulares)</td>
+    <td>Apenas os inliers do RANSAC</td>
+    <td>Mínimos quadrados via decomposição matricial. O vetor normal é o último vetor singular (menor variância).</td>
+    <td>Normal do plano [a, b, c] + centroide</td>
+  </tr>
+  <tr>
+    <td><strong>Gram-Schmidt</strong></td>
+    <td>Normal do SVD [a, b, c]</td>
+    <td>Normal vira Z_mesa. Ortogonaliza [1,0,0] em relação a Z → X_mesa. Produto vetorial Z×X → Y_mesa.</td>
+    <td>3 eixos ortogonais X_mesa, Y_mesa, Z_mesa</td>
+  </tr>
+  <tr>
+    <td><strong>Matriz R + T</strong></td>
+    <td>X_mesa, Y_mesa, Z_mesa + centroide</td>
+    <td>Empilha os 3 eixos como linhas de R. Translação = -R @ centroide. Monta T 4×4.</td>
+    <td>Matriz T básica 4×4</td>
+  </tr>
+  <tr>
+    <td><strong>T_shift</strong></td>
+    <td>T básica</td>
+    <td>Corrige origem: move de "centro da tampa" para "canto da base de madeira".</td>
+    <td><strong>T_final</strong> — salvo em calibration_data.json</td>
+  </tr>
+</table>
+
+<div class="bloco-engcomp">
+  <div class="bloco-label">🟣 Engenharia da Computação — Por que cada um não resolve sozinho</div>
+  <ul>
+    <li><strong>SVD sem RANSAC:</strong> ajustaria o plano sobre todos os pontos (tampa + moldura + piso). Resultado: plano médio torto.</li>
+    <li><strong>RANSAC sem SVD:</strong> o melhor plano encontrado usa apenas 3 pontos sorteados. Ruidoso — 3 pontos têm erro de medição.</li>
+    <li><strong>Gram-Schmidt sem os dois:</strong> precisa da normal para funcionar. Sem RANSAC+SVD, não há normal confiável.</li>
+  </ul>
+</div>
+
+<div class="bloco-engcomp">
+  <div class="bloco-label">🟣 Engenharia da Computação — O que a matriz de rotação R faz</div>
+  <p>Após o Gram-Schmidt, você tem 3 vetores expressos em coordenadas do Kinect. Empilhados como linhas:</p>
+  <pre>R = [ X_mesa ]   ← linha 1
+    [ Y_mesa ]   ← linha 2
+    [ Z_mesa ]   ← linha 3</pre>
+  <p>Multiplicar um ponto por R calcula três produtos internos:</p>
+  <pre>R @ p = [ X_mesa · p ]   ← "quanto de p vai na direção X da mesa?"
+        [ Y_mesa · p ]   ← "quanto de p vai na direção Y da mesa?"
+        [ Z_mesa · p ]   ← "quanto de p vai na direção Z da mesa?"</pre>
+  <p>É como trocar a régua: antes você media "quanto para frente/trás/lado do Kinect". Depois, "quanto ao longo de X/Y/Z da mesa".</p>
+</div>
+
+<div class="bloco-engcomp">
+  <div class="bloco-label">🟣 Engenharia da Computação — Por que mover o centroide? (T_shift)</div>
+  <p>A matriz T básica move o <strong>centroide do plano detectado</strong> para (0,0,0). Mas o centroide é o centro geométrico da tampa — não o canto da base de madeira, que é onde queremos a origem.</p>
+  <p>O T_shift corrige isso em dois eixos:</p>
+  <ul>
+    <li><strong>XY:</strong> desloca +L/2 e +C/2 para mover a origem do centro da mesa para o canto. Sem isso, metade dos pontos teria coordenadas negativas e sumiria da grade.</li>
+    <li><strong>Z (modo tampa):</strong> a tampa está 0,20m acima da base. Com o shift, a tampa lê Z=+0,20m e a base de madeira lê Z=0 — que é a cota zero desejada.</li>
+  </ul>
+  <pre>T_final = T_shift @ T_basica</pre>
+</div>
+
+<h3>2.5 Convenção de Z — Fundamental para Não Se Confundir</h3>
+<div class="bloco-alerta">
+  <div class="bloco-label">⚠ Saiba de cor — é o que mais confunde</div>
+  <ul>
+    <li><strong>Z = 0,00 m</strong> → Base de madeira vazia do caixão (chão)</li>
+    <li><strong>Z = +0,20 m</strong> → Borda superior (areia no máximo)</li>
+    <li><strong>Areia sempre tem Z positivo</strong> — cresce para cima</li>
+    <li>O sensor mede distância (aumenta para baixo). Por isso inverte-se: <code>Z_mesa = -Z_real</code></li>
+  </ul>
+</div>
+
+<h3>2.6 SDK — O Que É e Por Que Há Três Drivers</h3>
+
+<div class="bloco-engcomp">
+  <div class="bloco-label">🟣 Eletrônica / Computação — SDK e cadeia de fallback</div>
+  <p><strong>SDK</strong> (Software Development Kit) é o pacote que o fabricante fornece para você usar o hardware no seu programa. Sem ele, você teria que programar na linguagem do hardware diretamente — inviável.</p>
+  <p>O Kinect teve duas gerações e existe o Azure Kinect (sucessor). Cada um tem seu SDK:</p>
+  <table>
+    <tr><th>Hardware</th><th>Driver/SDK</th><th>Condição</th></tr>
+    <tr><td>Kinect v2 (2014, Xbox One)</td><td>PyKinect2 — SDK oficial Microsoft</td><td>Windows 10/11, USB 3.0 nativo</td></tr>
+    <tr><td>Azure Kinect / RealSense (2019)</td><td>Open3D</td><td>Sensor mais moderno</td></tr>
+    <tr><td>Kinect v1 (2010, Xbox 360)</td><td>freenect (libfreenect)</td><td>Driver open-source, não oficial</td></tr>
+    <tr><td>Nenhum sensor</td><td>Simulação (grade + mouse)</td><td>Fallback final — nunca trava</td></tr>
+  </table>
+  <p>O sistema tenta os três em ordem — como um computador que tenta WiFi, cabo, hotspot. A interface pública <code>capturar_nuvem()</code> é idêntica em todos os modos — o resto do sistema nunca sabe qual driver está ativo.</p>
+</div>
+
+<h3>2.7 Discretização em Grade — Células NÃO São Pixels</h3>
+
+<div class="bloco-engcomp">
+  <div class="bloco-label">🟣 Engenharia da Computação — O que cada célula representa</div>
+  <p>As células <strong>não são pixels</strong>. São <strong>regiões físicas da mesa</strong>.</p>
+  <p>Com a mesa de 1,18m × 0,60m e grade 30×15:</p>
+  <pre>célula X = 1,18m / 30 ≈ 3,9 cm   (largura física de cada célula)
+célula Y = 0,60m / 15 = 4,0 cm   (altura física de cada célula)</pre>
+  <p>Cada célula é um quadrado de ~4cm×4cm de areia real. Dentro desse quadrado podem cair dezenas ou centenas de pontos da nuvem do Kinect. A célula pega a <strong>média de Z</strong> de todos esses pontos — isso filtra o ruído do sensor.</p>
+  <p><strong>Por que 30×15 e não 30×30?</strong> A mesa não é quadrada (1,18:0,60 ≈ 2:1). Com 30×30, as células teriam 3,9cm × 2,0cm — muito retangulares. Com 30×15, ficam ~3,9cm × 4,0cm — aproximadamente quadradas, visualmente mais limpo.</p>
+</div>
+
+<p>Isso serve para três coisas:</p>
+<ol>
+  <li><strong>Filtrar ruído:</strong> O Kinect tem erro de ~3mm. A média de N pontos reduz o erro para ~3mm/√N.</li>
+  <li><strong>Performance:</strong> Processar 450 células é centenas de vezes mais rápido que 200.000 pontos.</li>
+  <li><strong>Visualização:</strong> Quadrados de 4cm projetados são visíveis. Pontos individuais seriam invisíveis.</li>
+</ol>
+
+<h3>2.8 Projeção Tsai — De Ponto 3D para Pixel do Projetor</h3>
+
+<div class="bloco-engcomp">
+  <div class="bloco-label">🟣 Engenharia da Computação — Por que o Tsai existe</div>
+  <p>A back-projection converte pixel → ponto 3D. O modelo de Tsai faz o <strong>caminho inverso</strong>: dado um ponto 3D da mesa, calcula em qual pixel do projetor ele deve aparecer.</p>
+  <p>Por que isso é necessário? O Kinect e o projetor são dispositivos em posições diferentes, olhando para a mesa em ângulos diferentes. O Kinect diz: "esse grão está em [0,73m, 0,45m, 0,08m] na mesa". Mas o projetor precisa saber: <em>"em qual pixel eu acendo a luz para iluminar esse grão?"</em></p>
+  <pre>fx = largura_px × d_cam / LARGURA_MESA    ← pixels por metro (horizontal)
+fy = altura_px  × d_cam / COMPRIMENTO_MESA ← pixels por metro (vertical)</pre>
+  <p>Para uma mesa 1,18m × 0,60m com projetor 640×480: <code>fx ≈ 5424 px/m</code>, <code>fy ≈ 8000 px/m</code>. Cada pixel representa ~0,18mm horizontalmente e ~0,12mm verticalmente — resolução suficiente para as células de 4cm.</p>
+  <p>Os 31×16 = 496 vértices da grade são todos projetados de uma só vez em uma única chamada <code>cv2.projectPoints</code>. Depois cada célula é desenhada com <code>cv2.fillPoly</code>.</p>
+</div>
+
+<h3>2.9 MDE — Modelo Digital de Elevação</h3>
+<p>É o "mapa alvo" — para cada coordenada (x, y), qual deve ser a altura z. Pode ser:</p>
+<ul>
+  <li><strong>GeoTIFF real:</strong> levantamento cartográfico de um terreno verdadeiro. Lido com <code>rasterio</code>, normalizado de elevações reais (ex: 800m–1200m) para a faixa [0, 0,20m] da caixa.</li>
+  <li><strong>Cubo Central:</strong> bloco no terço central da mesa com metade da altura. Para a mesa 1,18m × 0,60m: cubo em [0,39m, 0,79m] × [0,20m, 0,40m], altura +0,10m.</li>
+  <li><strong>Morro Gaussiano:</strong> monte suave centralizado. No centro Z=+0,20m, nas bordas Z→0.</li>
+</ul>
+
+<h3>2.10 Dimensões Físicas do Sistema</h3>
+<div class="bloco-tecnico">
+  <div class="bloco-label">📐 Medidas do sistema real (inserir na GUI)</div>
+  <table>
+    <tr><th>Campo da GUI</th><th>Valor</th><th>O que representa</th></tr>
+    <tr><td>Largura interna do caixão (cm)</td><td><strong>118</strong></td><td>Eixo X da mesa em cm</td></tr>
+    <tr><td>Comprimento interno (cm)</td><td><strong>60</strong></td><td>Eixo Y da mesa em cm</td></tr>
+    <tr><td>Profundidade do caixão (cm)</td><td><strong>20</strong></td><td>Altura máxima da areia</td></tr>
+    <tr><td>Distância Kinect → Tampa (cm)</td><td><strong>118</strong></td><td>Do sensor até a borda superior do caixão</td></tr>
+    <tr><td>Células grade X</td><td><strong>30</strong></td><td>~3,9cm por célula</td></tr>
+    <tr><td>Células grade Y</td><td><strong>15</strong></td><td>~4,0cm por célula — células quase quadradas</td></tr>
+  </table>
+  <p>A validação de sanidade do RANSAC espera encontrar o plano da base a <strong>118 + 20 = 138 cm</strong> do Kinect. Se medir algo muito diferente disso, aborta com erro — protege contra tampa mal posicionada.</p>
+</div>
+
+<h3>2.11 Resiliência — "Zero Crash"</h3>
+<p>O sistema nunca para por ausência de hardware ou arquivo:</p>
+<pre>Sensor:  PyKinect2 (Kinect v2) → Open3D (Azure/RealSense) → freenect (Kinect v1) → Simulação
+MDE:     GeoTIFF real → Cubo Central sintético</pre>
+
+<!-- ===================== PARTE 3 ===================== -->
+<div class="page-break"></div>
+<h2>PARTE 3 — SLIDE POR SLIDE: O QUE MOSTRAR E O QUE FALAR</h2>
+
+<div class="quadro-cronograma">
+  <strong>Distribuição de Tempo (20 min total)</strong>
+  <table>
+    <tr><th>Slides</th><th>Seção</th><th>Quem</th><th>Tempo</th></tr>
+    <tr><td>1–4</td><td>Introdução</td><td>Apresentador 1</td><td>3:00</td></tr>
+    <tr><td>5–6</td><td>Ref. Teórico pt.1</td><td>Apresentador 1</td><td>2:00</td></tr>
+    <tr><td>7–8</td><td>Ref. Teórico pt.2 / Requisitos</td><td>Apresentador 2</td><td>2:00</td></tr>
+    <tr><td>9–11</td><td>Arquitetura e Algoritmos</td><td><strong>Raquel (Eng. Comp.)</strong></td><td>3:00</td></tr>
+    <tr><td>12–14</td><td>Otimização de Performance</td><td><strong>Raquel (Eng. Comp.)</strong></td><td>3:00</td></tr>
+    <tr><td>15–16</td><td>Instalação e Demonstração</td><td>Apresentador 3</td><td>2:00</td></tr>
+    <tr><td>17–18</td><td>Resultados e Robustez</td><td>Apresentador 4</td><td>2:00</td></tr>
+    <tr><td>19–21</td><td>Conclusão e Encerramento</td><td>Apresentador 4</td><td>3:00</td></tr>
+  </table>
+</div>
+
+<!-- SLIDE 1 -->
+<div class="slide-card no-break">
+  <div class="slide-header">
+    <span>Slide 1 — Capa</span>
+    <span><span class="apresentador">Apresentador 1</span><span class="tempo">⏱ 0:30</span></span>
+  </div>
+  <div class="slide-body">
+    <div class="bloco-visual">
+      <div class="bloco-label">🖥 O que deve estar na tela</div>
+      Título completo · Subtítulo · Brasão IME · Nomes · Data · Logo Seção de Simulação AMAN
+    </div>
+    <div class="bloco-fala">
+      <div class="bloco-label">🎙 O que falar</div>
+      <em>"Bom dia, Senhores membros da banca examinadora, professores e demais presentes. É com grande honra que apresentamos hoje o nosso Trabalho de Conclusão de Curso, intitulado 'Caixão de Areia com Realidade Aumentada: Sistema de Baixo Custo Computacional para Apoio à Instrução Militar', desenvolvido em atendimento a uma demanda real da Seção de Simulação da Academia Militar das Agulhas Negras."</em>
+    </div>
+  </div>
+</div>
+
+<!-- SLIDE 2 -->
+<div class="slide-card no-break">
+  <div class="slide-header">
+    <span>Slide 2 — Apresentação da Equipe</span>
+    <span><span class="apresentador">Apresentador 1</span><span class="tempo">⏱ 0:45</span></span>
+  </div>
+  <div class="slide-body">
+    <div class="bloco-visual">
+      <div class="bloco-label">🖥 O que deve estar na tela</div>
+      Nome e função de cada integrante com suas áreas de responsabilidade
+    </div>
+    <div class="bloco-fala">
+      <div class="bloco-label">🎙 O que falar</div>
+      <em>"Antes de adentrarmos ao conteúdo técnico, permitam-nos uma breve apresentação. Ao longo desta apresentação, cada um discorrerá sobre a etapa em que teve maior protagonismo."</em>
+    </div>
+    <div class="bloco-tecnico">
+      <div class="bloco-label">💡 Dica</div>
+      Mesmo que a banca pergunte a um integrante sobre um slide que não era "dele", todos devem conhecer o roteiro completo.
+    </div>
+  </div>
+</div>
+
+<!-- SLIDE 3 -->
+<div class="slide-card no-break">
+  <div class="slide-header">
+    <span>Slide 3 — Contextualização do Problema</span>
+    <span><span class="apresentador">Apresentador 1</span><span class="tempo">⏱ 1:00</span></span>
+  </div>
+  <div class="slide-body">
+    <div class="bloco-visual">
+      <div class="bloco-label">🖥 O que deve estar na tela</div>
+      Foto da caixa de areia física · "Maquetes estáticas não refletem alterações em tempo real" · "Soluções comerciais pressupõem GPU dedicada"
+    </div>
+    <div class="bloco-fala">
+      <div class="bloco-label">🎙 O que falar</div>
+      <em>"A Seção de Simulação da AMAN emprega maquetes físicas de terreno para instrução de leitura de carta topográfica e planejamento tático. Contudo, essas maquetes são estáticas: qualquer alteração de relevo não oferece retorno visual imediato sobre a aderência ao terreno de referência. Soluções de AR Sandbox já existem, mas foram concebidas presumindo estações com GPUs dedicadas — um cenário distante do parque computacional disponível em unidades de instrução militar."</em>
+    </div>
+    <div class="bloco-tecnico">
+      <div class="bloco-label">💡 GPU: o que é</div>
+      Hardware especializado em processar milhares de operações matemáticas simples em paralelo — ideal para gráficos. Custa entre R$2.000 e R$30.000+. Computadores de escritório militares normalmente não têm.
+    </div>
+  </div>
+</div>
+
+<!-- SLIDE 4 -->
+<div class="slide-card no-break">
+  <div class="slide-header">
+    <span>Slide 4 — Objetivo Geral</span>
+    <span><span class="apresentador">Apresentador 1</span><span class="tempo">⏱ 0:45</span></span>
+  </div>
+  <div class="slide-body">
+    <div class="bloco-fala">
+      <div class="bloco-label">🎙 O que falar</div>
+      <em>"O objetivo geral consistiu em desenvolver um sistema de AR Sandbox capaz de projetar retorno visual colorido sobre a areia em tempo real, plenamente operacional em computadores sem GPU, por otimização agressiva de algoritmos — não pela aquisição de hardware mais caro."</em>
+    </div>
+  </div>
+</div>
+
+<!-- SLIDE 5 e 6 -->
+<div class="slide-card no-break">
+  <div class="slide-header">
+    <span>Slides 5–6 — Hardware Legado e Escopo Físico</span>
+    <span><span class="apresentador">Apresentador 1</span><span class="tempo">⏱ 2:00</span></span>
+  </div>
+  <div class="slide-body">
+    <div class="bloco-fala">
+      <div class="bloco-label">🎙 O que falar</div>
+      <em>"A diferença prática: na implementação original, o sistema levava 45,5ms por quadro. Após otimização, caiu para 17,7ms — diferença entre resposta entrecortada e fluida, sem GPU. O escopo físico: caixa de areia, sensor Kinect montado acima, grade de células de ~4cm cada, tolerância de ±2cm — compatível com a precisão exigida em instrução tática."</em>
+    </div>
+    <div class="bloco-tecnico">
+      <div class="bloco-label">💡 Por que ±2cm de tolerância?</div>
+      Menor (±5mm) seria impossível com areia movida manualmente. Maior (±10cm) tornaria o exercício sem sentido tático. ±2cm é realista para o instruendo e significativo para a instrução.
+    </div>
+  </div>
+</div>
+
+<!-- SLIDES 7-8 -->
+<div class="slide-card no-break">
+  <div class="slide-header">
+    <span>Slides 7–8 — Requisitos e Resiliência</span>
+    <span><span class="apresentador">Apresentador 2</span><span class="tempo">⏱ 2:00</span></span>
+  </div>
+  <div class="slide-body">
+    <div class="bloco-fala">
+      <div class="bloco-label">🎙 O que falar</div>
+      <em>"Nos requisitos funcionais: captura 3D, calibração, comparação com MDE, retorno visual por código de cores. Nos não funcionais: zero crash — o sistema não pode encerrar-se abruptamente durante uma aula; operação 100% offline; instalável por pessoal sem formação em TI. A cadeia de contingência: Kinect v2 → Azure Kinect → Kinect v1 → Simulação por mouse."</em>
+    </div>
+  </div>
+</div>
+
+<!-- SLIDE 9 — SUA PARTE COMEÇA AQUI -->
+<div class="banner-engcomp">🟣 SUA PARTE COMEÇA AQUI — Slides 9 a 14</div>
+
+<div class="slide-card no-break">
+  <div class="slide-header">
+    <span>Slide 9 — Arquitetura em Três Camadas</span>
+    <span><span class="apresentador eng">Raquel — Eng. Computação</span><span class="tempo">⏱ 1:00</span></span>
+  </div>
+  <div class="slide-body">
+    <div class="bloco-visual">
+      <div class="bloco-label">🖥 O que deve estar na tela</div>
+<pre>main.py (Máquina de Estados / Orquestrador)
+      │
+  ┌───┴────────────┬─────────────────┐
+kinect_sensor.py  motor_caixao_areia.py  mde_cartografia.py
+(Hardware +        (Álgebra Linear:      (GeoTIFF real +
+ Fallback SDK)      RANSAC, SVD, Tsai)    mapa sintético)</pre>
+    </div>
+    <div class="bloco-fala">
+      <div class="bloco-label">🎙 O que falar</div>
+      <em>"A arquitetura do sistema foi organizada em três camadas com responsabilidades estritas. A camada de hardware — 'kinect_sensor' — isola toda a comunicação com o sensor e implementa a cadeia de contingência em cascata entre drivers. A camada matemática — 'motor_caixao_areia' — concentra toda a álgebra linear, sem nenhuma dependência de hardware: calibração, transformação de coordenadas e geração da imagem final. A camada de dados — 'mde_cartografia' — abstrai a origem do mapa de referência. Essa separação permitiu testar e validar o motor matemático de forma completamente isolada do hardware, via cinquenta e oito testes automatizados."</em>
+    </div>
+    <div class="bloco-engcomp">
+      <div class="bloco-label">🟣 Eng. Computação — Por que separar em 3 módulos</div>
+      <ul>
+        <li><strong>Testabilidade:</strong> o motor matemático foi testado com nuvens sintéticas, sem precisar de Kinect conectado.</li>
+        <li><strong>Substituibilidade:</strong> se o Kinect for trocado por outro sensor, só o <code>kinect_sensor.py</code> muda.</li>
+        <li><strong>Latência mínima:</strong> tudo roda no mesmo processo Python — troca de dados instantânea, vital para o loop em tempo real.</li>
+      </ul>
+      <p><strong>O kinect_sensor entrega nuvem de pontos. O motor processa e compara. O mde_cartografia fornece o alvo.</strong></p>
+    </div>
+  </div>
+</div>
+
+<!-- SLIDE 10 -->
+<div class="slide-card no-break">
+  <div class="slide-header">
+    <span>Slide 10 — Pipeline de Calibração</span>
+    <span><span class="apresentador eng">Raquel — Eng. Computação</span><span class="tempo">⏱ 1:30</span></span>
+  </div>
+  <div class="slide-body">
+    <div class="bloco-visual">
+      <div class="bloco-label">🖥 O que deve estar na tela</div>
+      Sequência numerada com setas:<br>
+      1. Captura da nuvem (back-projection pinhole) → 2. RANSAC filtra outliers → 3. SVD refina normal → 4. Gram-Schmidt constrói base → 5. T básica (R + translação) → 6. T_shift (corrige origem) → 7. T_final salvo em JSON
+    </div>
+    <div class="bloco-fala">
+      <div class="bloco-label">🎙 O que falar</div>
+      <em>"A calibração resolve o seguinte problema: o Kinect enxerga o mundo no referencial dele — com origem na lente — mas o sistema AR precisa saber onde cada ponto está no referencial da mesa, com origem na base de madeira. São dois sistemas de coordenadas completamente diferentes para o mesmo espaço físico. A calibração, feita uma única vez com uma tampa plana sobre o caixão, calcula a transformação matemática entre eles.</em>
+      <br><br>
+      <em>O processo tem seis etapas encadeadas. Primeiro, o sensor captura uma nuvem de pontos que inclui não só a tampa, mas também a moldura, o piso e ruído da sala — o campo de visão do Kinect é mais largo que o caixão. O RANSAC então sorteia aleatoriamente três pontos, define um plano candidato e conta quantos pontos da nuvem inteira estão a menos de três centímetros desse plano. Após mil iterações, o plano com mais inliers é o da tampa. O SVD, aplicado exclusivamente sobre esses inliers, encontra com precisão a normal ao plano. O Gram-Schmidt constrói dois eixos adicionais ortogonais à normal, formando o sistema de coordenadas completo da mesa. A matriz de transformação combina essa rotação com a translação necessária para que o canto da base de madeira seja a origem do sistema. O resultado é persistido em disco e reutilizado em todas as execuções seguintes."</em>
+    </div>
+    <div class="bloco-engcomp">
+      <div class="bloco-label">🟣 Eng. Computação — Como explicar cada algoritmo em 1 frase</div>
+      <ul>
+        <li><strong>Back-projection pinhole:</strong> "Pixel + distância → coordenada 3D. A lente da câmera tem geometria conhecida, então dá para calcular exatamente onde estava o ponto que gerou aquele pixel."</li>
+        <li><strong>RANSAC:</strong> "Testa 1000 planos aleatórios e escolhe o que tem mais pontos perto dele. É robusto porque a tampa domina a cena — a maioria dos pontos é dela."</li>
+        <li><strong>SVD:</strong> "Ajuste de mínimos quadrados por decomposição matricial. O vetor perpendicular ao plano é matematicamente o de menor variância nos dados — exatamente o que o SVD extrai."</li>
+        <li><strong>Gram-Schmidt:</strong> "A normal do SVD diz onde é 'cima'. Gram-Schmidt constrói 'leste' e 'norte' da mesa a partir disso, removendo a componente vertical de um vetor arbitrário."</li>
+        <li><strong>T_shift:</strong> "Correção de origem: move de 'centro da tampa' para 'canto da base de madeira', que é onde o sistema define Z=0."</li>
+      </ul>
+    </div>
+    <div class="bloco-tecnico">
+      <div class="bloco-label">💡 Analogia para leigos (RANSAC)</div>
+      "Imagine uma praça com pessoas — a maioria no chão plano, algumas em cima de bancos. O RANSAC pega 3 pessoas aleatórias, imagina o plano delas, e conta quantas pessoas da multidão estão a menos de 3cm desse plano. Após 1000 tentativas, fica com o plano que tinha mais pessoas — que é o chão. As pessoas em bancos são descartadas."
+    </div>
+  </div>
+</div>
+
+<!-- SLIDE 11 -->
+<div class="slide-card no-break">
+  <div class="slide-header">
+    <span>Slide 11 — Discretização em Grade e Retorno Visual</span>
+    <span><span class="apresentador eng">Raquel — Eng. Computação</span><span class="tempo">⏱ 1:00</span></span>
+  </div>
+  <div class="slide-body">
+    <div class="bloco-visual">
+      <div class="bloco-label">🖥 O que deve estar na tela</div>
+      Captura da grade colorida (vermelho/azul/verde) sobre a área simulada<br>
+      · "Nuvem de pontos agrupada em células — altura média por célula filtra ruído"<br>
+      · "Projeção em lote dos vértices via modelo de câmera de Tsai"<br>
+      · "Rasterização com fillPoly — cobertura contínua, sem buracos"
+    </div>
+    <div class="bloco-fala">
+      <div class="bloco-label">🎙 O que falar</div>
+      <em>"Uma decisão de projeto importante foi não colorir pontos individuais da nuvem capturada — abordagem ruidosa e com falhas de cobertura —, mas dividir a mesa em células regulares de aproximadamente quatro centímetros, calculando a altura média de cada uma. Essa média espacial atua como filtro do ruído inerente ao sensor. A altura medida em cada célula é comparada à altura alvo do mapa de referência, gerando a classificação por cores. Os vértices da malha inteira são projetados de uma só vez para o plano de imagem do projetor — usando o modelo de câmera de Tsai, que mapeia coordenadas físicas da mesa para pixels da imagem —, e cada célula é desenhada como polígono preenchido, garantindo projeção contínua e sólida sobre a areia."</em>
+    </div>
+    <div class="bloco-engcomp">
+      <div class="bloco-label">🟣 Eng. Computação — O pipeline de um frame completo</div>
+<pre>Kinect entrega: imagem de profundidade (pixels em mm)
+      ↓  back-projection pinhole
+Nuvem 3D no referencial do Kinect (X, Y, -Z em metros)
+      ↓  T_final (uma multiplicação de matriz)
+Nuvem 3D no referencial da mesa (X_mesa, Y_mesa, Z_mesa)
+      ↓  grade 30×15, altura média por célula
+450 células com Z_real médio
+      ↓  consulta ao MDE
+450 pares (Z_real, Z_alvo)
+      ↓  Z_real > Z_alvo + tol → Vermelho
+         Z_real < Z_alvo - tol → Azul
+         dentro da tolerância  → Verde
+      ↓  Tsai projeta vértices em pixels
+      ↓  fillPoly desenha os quads
+Imagem BGR → projetor → luz sobre a areia</pre>
+    </div>
+  </div>
+</div>
+
+<!-- SLIDE 12 -->
+<div class="slide-card no-break">
+  <div class="slide-header">
+    <span>Slide 12 — O Desafio de Performance</span>
+    <span><span class="apresentador eng">Raquel — Eng. Computação</span><span class="tempo">⏱ 1:00</span></span>
+  </div>
+  <div class="slide-body">
+    <div class="bloco-visual">
+      <div class="bloco-label">🖥 O que deve estar na tela</div>
+      "Um pipeline correto nem sempre é um pipeline rápido"<br>
+      · Até 900 chamadas de desenho individuais por quadro<br>
+      · Projeções geométricas recalculadas a cada quadro, mesmo sem mudança<br>
+      · Acumulação célula-a-célula com <code>np.add.at</code> (não bufferizado)<br>
+      · GeoTIFF inteiro carregado em memória
+    </div>
+    <div class="bloco-fala">
+      <div class="bloco-label">🎙 O que falar</div>
+      <em>"Uma implementação funcionalmente correta mostrou-se incompatível com o requisito de hardware sem GPU. Identificamos quatro gargalos por perfilamento de código. Primeiro, a rasterização realizava até novecentas chamadas individuais de desenho por quadro — o custo fixo de cada chamada, somado, dominava o tempo de processamento. Segundo, a projeção geométrica dos vértices da malha era recalculada a cada quadro, mesmo quando a calibração permanecia inalterada por milhares de quadros. Terceiro, a agregação de trezentos mil pontos utilizava uma rotina do NumPy não bufferizada, conhecidamente lenta. E quarto, o GeoTIFF era carregado inteiro em memória, mesmo que só consultássemos algumas centenas de pontos."</em>
+    </div>
+    <div class="bloco-engcomp">
+      <div class="bloco-label">🟣 Eng. Computação — O que é perfilamento de código</div>
+      Medir quanto tempo o programa passa em cada função. Ferramentas como <code>cProfile</code> do Python mostram o gargalo exato. Sem perfilamento, otimiza-se às cegas. Com ele, sabe-se exatamente o que atacar primeiro — princípio da otimização guiada por dados, não por intuição.
+    </div>
+  </div>
+</div>
+
+<!-- SLIDE 13 -->
+<div class="slide-card no-break">
+  <div class="slide-header">
+    <span>Slide 13 — Otimizações Implementadas</span>
+    <span><span class="apresentador eng">Raquel — Eng. Computação</span><span class="tempo">⏱ 1:30</span></span>
+  </div>
+  <div class="slide-body">
+    <div class="bloco-visual">
+      <div class="bloco-label">🖥 O que deve estar na tela</div>
+      <table>
+        <tr><th>Gargalo</th><th>Solução</th><th>Ganho</th></tr>
+        <tr><td>~900 chamadas de desenho/quadro</td><td>Agrupamento por cor → máx. 3 chamadas</td><td>300×</td></tr>
+        <tr><td>Projeção recalculada todo quadro</td><td>Cache indexado pela calibração</td><td>~1ms poupado/quadro</td></tr>
+        <tr><td>np.add.at (não bufferizado)</td><td>np.bincount (vetorizado em C)</td><td>5×</td></tr>
+        <tr><td>GeoTIFF inteiro em memória</td><td>Decimated read (leitura reduzida)</td><td>10–100× menos RAM</td></tr>
+      </table>
+    </div>
+    <div class="bloco-fala">
+      <div class="bloco-label">🎙 O que falar</div>
+      <em>"A estratégia seguiu um princípio simples: eliminar trabalho redundante antes de otimizar o trabalho necessário. Primeiro, reescrevemos a rasterização para agrupar as células por cor: como existem apenas três cores possíveis, o número de chamadas de desenho caiu de até novecentas para no máximo três por quadro. Segundo, implementamos cache para a projeção geométrica dos vértices — só é recalculada quando o operador recalibra. Terceiro, substituímos a rotina de acumulação por 'bincount', que opera inteiramente em C vetorizado. E quarto, passamos a solicitar ao leitor de GeoTIFF uma versão já reduzida na origem, evitando alocar dezenas de megabytes que jamais seriam consultados."</em>
+    </div>
+    <div class="bloco-engcomp">
+      <div class="bloco-label">🟣 Eng. Computação — Detalhes de cada otimização</div>
+      <p><strong>Agrupamento por cor:</strong> há apenas 3 cores possíveis (Vermelho/Azul/Verde). Em vez de chamar <code>fillPoly</code> 900 vezes (uma por célula), agrupa-se todas as vermelhas num array e chama uma vez para todas. Total: 3 chamadas por quadro. O overhead por chamada OpenCV (validação de buffer, conversão de tipos) é o custo dominante para polígonos pequenos.</p>
+      <p><strong>Cache de projeção:</strong> a projeção dos vértices depende apenas dos parâmetros de calibração — fixos por milhares de quadros. O resultado é guardado em dicionário indexado pelos bytes da calibração. Recalculado automaticamente ao pressionar [C].</p>
+      <p><strong>bincount vs np.add.at:</strong> <code>np.add.at</code> é Python puro — acessa o array ponto a ponto. <code>np.bincount</code> é C vetorizado — processa todos os pontos de uma vez em memória contígua. 5× mais rápido com ~200.000 pontos.</p>
+      <p><strong>Decimated read:</strong> GeoTIFF pode ter 10.000×10.000px (100MB). Como a grade é 30×15, só precisamos de ~450 amostras. O rasterio suporta ler já com subsampling — retorna direto um array pequeno sem carregar o arquivo inteiro.</p>
+    </div>
+  </div>
+</div>
+
+<!-- SLIDE 14 -->
+<div class="slide-card no-break">
+  <div class="slide-header">
+    <span>Slide 14 — Resultado Quantitativo</span>
+    <span><span class="apresentador eng">Raquel — Eng. Computação</span><span class="tempo">⏱ 0:30</span></span>
+  </div>
+  <div class="slide-body">
+    <div class="bloco-visual">
+      <div class="bloco-label">🖥 O que deve estar na tela</div>
+      Gráfico: "Antes: 45,5ms (~22 FPS)" × "Depois: 17,7ms (~56 FPS)"<br>
+      <strong>2,57× mais rápido</strong> · Medição com 200.000 pontos · grade 30×30
+    </div>
+    <div class="bloco-fala">
+      <div class="bloco-label">🎙 O que falar</div>
+      <em>"O resultado foi medido objetivamente com carga equivalente a um quadro real: duzentos mil pontos em grade de trinta por trinta células. O tempo médio caiu de quarenta e cinco vírgula cinco para dezessete vírgula sete milissegundos — ganho de dois vírgula cinquenta e sete vezes. Em taxa de quadros, de vinte e dois para cinquenta e seis por segundo — a diferença entre uma resposta entrecortada e uma fluida ao movimento da pá, especialmente em processadores mais antigos. Passo a palavra agora ao [próximo apresentador]."</em>
+    </div>
+    <div class="bloco-tecnico">
+      <div class="bloco-label">💡 Números que você deve saber de cor</div>
+      <table>
+        <tr><th>Métrica</th><th>Antes</th><th>Depois</th></tr>
+        <tr><td>Tempo por quadro</td><td>45,5 ms</td><td>17,7 ms</td></tr>
+        <tr><td>FPS teórico</td><td>~22 FPS</td><td>~56 FPS</td></tr>
+        <tr><td>Ganho</td><td colspan="2"><strong>2,57× (157% mais rápido)</strong></td></tr>
+        <tr><td>Chamadas de desenho/quadro</td><td>até 900</td><td>máx. 3</td></tr>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- FIM DA SUA PARTE -->
+<div class="bloco-alerta">
+  <div class="bloco-label">⚠ Sua parte termina no Slide 14 — passa para o próximo apresentador</div>
+  Slides 15 em diante: instalação, demonstração ao vivo, resultados, conclusão — outros apresentadores.
+</div>
+
+<!-- SLIDES 15-21 resumidos -->
+<div class="slide-card no-break">
+  <div class="slide-header">
+    <span>Slides 15–16 — Instalação e Demonstração</span>
+    <span><span class="apresentador">Apresentador 3</span><span class="tempo">⏱ 2:00</span></span>
+  </div>
+  <div class="slide-body">
+    <div class="bloco-fala">
+      <div class="bloco-label">🎙 O que falar</div>
+      <em>"Instalação em três comandos: criar ambiente virtual, ativar, instalar dependências. Opera 100% offline. Na demonstração: pressionar C calibra (automático em simulação), botão direito do mouse preenche areia, esquerdo cava. Grade responde em tempo real — de azul para verde conforme a areia sobe para o alvo. Tecla M alterna entre Cubo Central e Morro Gaussiano."</em>
+    </div>
+    <div class="bloco-alerta">
+      <div class="bloco-label">⚠ Contingência para demonstração</div>
+      Se algo der errado ao vivo: "o próprio sistema foi projetado com resiliência zero crash — o Modo Simulação demonstra exatamente essa resiliência na prática". Tenha um <strong>vídeo pré-gravado</strong> como backup.
+    </div>
+  </div>
+</div>
+
+<div class="slide-card no-break">
+  <div class="slide-header">
+    <span>Slides 17–21 — Resultados, Conclusão e Encerramento</span>
+    <span><span class="apresentador">Apresentador 4</span><span class="tempo">⏱ 5:00</span></span>
+  </div>
+  <div class="slide-body">
+    <div class="bloco-fala">
+      <div class="bloco-label">🎙 O que falar</div>
+      <em>"58 testes automatizados aprovados — cobertura do motor matemático ponta a ponta. Em síntese: demonstramos que é possível entregar a mesma capacidade funcional de AR Sandbox, antes associada a GPUs, em hardware modesto por otimização criteriosa — não por aquisição de equipamento mais caro. Sob a ótica da administração pública: a Seção de Simulação emprega computadores já disponíveis, sem investimento adicional. Limitações: validação concentrada no Kinect v2; calibração exige repetição ao reposicionar o sensor. Futuros: camadas táticas, relatórios automáticos, múltiplas bancadas em rede."</em>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== PARTE 4 — PERGUNTAS ===================== -->
+<div class="page-break"></div>
+<h2>PARTE 4 — PERGUNTAS PROVÁVEIS DA BANCA</h2>
+
+<div class="banner-engcomp">🟣 Perguntas direcionadas à Engenharia da Computação / Eletrônica</div>
+
+<div class="bloco-engcomp">
+  <div class="bloco-label">🟣 ❓ "O Kinect já entrega coordenadas 3D prontas?"</div>
+  <p><strong>Não.</strong> O Kinect entrega um mapa de profundidade — uma imagem onde cada pixel vale a distância em milímetros. Para transformar isso em coordenada 3D [X, Y, Z], aplicamos a back-projection pinhole, usando os parâmetros intrínsecos da câmera (distância focal e ponto principal), fornecidos pelo fabricante.</p>
+</div>
+
+<div class="bloco-engcomp">
+  <div class="bloco-label">🟣 ❓ "Por que inverter o sinal de Z?"</div>
+  <p>O Kinect mede distância do sensor: quanto mais longe o objeto, maior o valor. Na mesa, a areia cresce para cima (para perto do sensor), então Z deve crescer conforme a areia sobe. A inversão <code>Z_mesa = -Z_real</code> garante isso. Sem ela, um morro de areia apareceria com Z menor que a base vazia — seria renderizado como um buraco.</p>
+</div>
+
+<div class="bloco-engcomp">
+  <div class="bloco-label">🟣 ❓ "O que é exatamente a T_final? O que ela faz?"</div>
+  <p>É uma matriz de transformação afim 4×4 que contém rotação + translação em uma única operação. Ela converte qualquer ponto expresso em coordenadas do Kinect (referencial da lente) para coordenadas da mesa (referencial do canto da base de madeira). A cada frame, é uma única multiplicação de matriz aplicada sobre ~200.000 pontos — eficiente por ser vetorizada no NumPy.</p>
+</div>
+
+<div class="bloco-engcomp">
+  <div class="bloco-label">🟣 ❓ "Por que o T_shift é necessário separadamente do T básico?"</div>
+  <p>O T básico move o centroide do plano detectado para a origem (0,0,0). Mas o centroide é o centro geométrico da tampa — não é o ponto que queremos como origem. O T_shift faz dois ajustes: (1) desloca X e Y para que a origem fique no canto da mesa, não no centro — sem isso, metade dos pontos teria coordenadas negativas e sumiria da grade; (2) no modo tampa, desloca Z em +profundidade_caixão para que a tampa leia Z=+0,20m e a base vazia leia Z=0.</p>
+</div>
+
+<div class="bloco-engcomp">
+  <div class="bloco-label">🟣 ❓ "As 30 células da grade são pixels?"</div>
+  <p>Não. São regiões físicas da mesa. Com a mesa de 1,18m × 0,60m e grade 30×15, cada célula representa ~3,9cm × 4,0cm de areia real. Dentro de cada célula podem cair centenas de pontos do Kinect. A célula calcula a altura média desses pontos — o que filtra o ruído do sensor (~3mm por leitura, reduzido por √N com a média).</p>
+</div>
+
+<div class="bloco-engcomp">
+  <div class="bloco-label">🟣 ❓ "Por que a mesa não precisa ser quadrada?"</div>
+  <p>O sistema não assume mesa quadrada em lugar nenhum. A projeção Tsai calcula fx e fy separadamente para cada eixo — se a mesa for 2:1 e o projetor for 16:9, fx e fy ficam diferentes entre si, e o sistema compensa automaticamente. Para manter as células visualmente quadradas, ajusta-se a grade proporcionalmente (30×15 para uma mesa 2:1).</p>
+</div>
+
+<div class="bloco-engcomp">
+  <div class="bloco-label">🟣 ❓ "Por que há três drivers diferentes (PyKinect2, Open3D, freenect)?"</div>
+  <p>Cada geração de Kinect tem seu SDK: o Kinect v2 usa o SDK oficial da Microsoft via PyKinect2; o Azure Kinect e RealSense usam Open3D; o Kinect v1 usa freenect (driver open-source). O sistema tenta os três em ordem para que funcione independentemente de qual sensor esteja disponível. A interface pública <code>capturar_nuvem()</code> é idêntica em todos os modos — o resto do sistema nunca sabe qual driver está ativo.</p>
+</div>
+
+<div class="bloco-engcomp">
+  <div class="bloco-label">🟣 ❓ "O Gram-Schmidt dá sempre o mesmo resultado? A orientação de X e Y é arbitrária?"</div>
+  <p>Sim, a orientação de X e Y é arbitrária — qualquer rotação em torno da normal do plano seria geometricamente válida. O Gram-Schmidt escolhe sempre a mesma orientação (baseada em [1,0,0] como semente), então é determinístico e coerente consigo mesmo. A lógica downstream só precisa que o referencial seja consistente internamente — não que X aponte para uma direção específica do mundo.</p>
+</div>
+
+<div class="bloco-tecnico">
+  <div class="bloco-label">❓ "Por que Python e não C++?"</div>
+  Python: ecossistema científico maduro (NumPy, OpenCV, SciPy, rasterio); prototipagem e iteração mais rápidas. As otimizações críticas chamam código nativo C (NumPy, OpenCV) — o Python orquestra, o trabalho pesado roda em C. O overhead do Python no loop principal é irrelevante comparado ao ganho das otimizações.
+</div>
+
+<div class="bloco-tecnico">
+  <div class="bloco-label">❓ "Explique o RANSAC com mais detalhes"</div>
+  Por iteração: (1) sorteia 3 pontos aleatoriamente; (2) calcula a normal pelo produto vetorial; (3) mede a distância de todos os N pontos ao plano; (4) conta inliers (distância &lt; 3cm); (5) guarda se é o melhor. Após 1000 iterações, refina com SVD sobre os inliers. Por que 1000? Com 70% de inliers, a probabilidade de ao menos uma iteração pegar 3 inliers é 1 − (1 − 0,7³)¹⁰⁰⁰ ≈ 100%.
+</div>
+
+<div class="bloco-tecnico">
+  <div class="bloco-label">❓ "Os 58 testes cobrem toda a funcionalidade?"</div>
+  Cobrem o motor matemático e os algoritmos principais. GUI e integração com hardware real são testadas manualmente. O teste de aceitação oficial valida o pipeline completo ponta a ponta com dados sintéticos, replicando exatamente o fluxo real de operação.
+</div>
+
+<div class="bloco-tecnico">
+  <div class="bloco-label">❓ "O sistema funciona com terrenos reais da região de Resende?"</div>
+  Sim — o AdaptadorMDE normaliza automaticamente elevações reais (ex: 800m–1200m) para a faixa [0, 0,20m] da caixa. Para demonstração e testes, usamos mapas sintéticos por serem verificáveis matematicamente.
+</div>
+
+<div class="bloco-tecnico">
+  <div class="bloco-label">❓ "Por que o sistema trava um pouco quando a areia se move?"</div>
+  Quando a areia muda, tudo na nuvem muda — nenhuma otimização de cache ajuda. Os gargalos são: (1) USB 3.0 sobrecarregado ou compartilhado; (2) discretização de 200.000 pontos; (3) fillPoly com muitas células trocando de cor. Soluções: usar porta USB 3.0 nativa (não hub), reduzir grade para 20×20 na GUI, reduzir resolução do projetor.
+</div>
+
+<!-- ===================== PARTE 5 ===================== -->
+<div class="page-break"></div>
+<h2>PARTE 5 — GLOSSÁRIO TÉCNICO</h2>
+
+<table>
+  <tr><th>Termo</th><th>Definição</th></tr>
+  <tr><td><strong>AR Sandbox</strong></td><td>Caixão de Areia com Realidade Aumentada — projeção sobre areia física</td></tr>
+  <tr><td><strong>Kinect</strong></td><td>Sensor de profundidade da Microsoft — entrega mapa de distâncias em mm, NÃO pontos 3D prontos</td></tr>
+  <tr><td><strong>SDK</strong></td><td>Software Development Kit — pacote do fabricante para usar o hardware no seu programa</td></tr>
+  <tr><td><strong>Mapa de Profundidade</strong></td><td>Imagem onde cada pixel = distância do sensor àquele ponto em milímetros</td></tr>
+  <tr><td><strong>Nuvem de Pontos</strong></td><td>Conjunto de pontos 3D (X, Y, Z) em metros, resultado da back-projection</td></tr>
+  <tr><td><strong>Back-projection Pinhole</strong></td><td>Conversão de pixel + profundidade → coordenada 3D, usando parâmetros intrínsecos da câmera</td></tr>
+  <tr><td><strong>Parâmetros Intrínsecos</strong></td><td>fx, fy (distância focal), cx, cy (centro óptico) — características físicas da lente, fixas por modelo de sensor</td></tr>
+  <tr><td><strong>Dois Referenciais</strong></td><td>Sistema do Kinect (origem na lente) vs Sistema da Mesa (origem no canto da base) — a calibração converte entre eles</td></tr>
+  <tr><td><strong>MDE</strong></td><td>Modelo Digital de Elevação — arquivo com altura alvo por coordenada (x, y)</td></tr>
+  <tr><td><strong>GeoTIFF</strong></td><td>Formato padrão de imagem cartográfica com elevações georreferenciadas</td></tr>
+  <tr><td><strong>RANSAC</strong></td><td>Algoritmo que testa 1000 planos aleatórios e escolhe o com mais inliers — robusto a outliers</td></tr>
+  <tr><td><strong>Inliers / Outliers</strong></td><td>Pontos que pertencem / não pertencem ao plano (tampa vs moldura/piso/ruído)</td></tr>
+  <tr><td><strong>SVD</strong></td><td>Decomposição em Valores Singulares — ajuste de mínimos quadrados; extrai a normal do plano como vetor de menor variância</td></tr>
+  <tr><td><strong>Gram-Schmidt</strong></td><td>Constrói X_mesa e Y_mesa ortogonais à normal (Z_mesa) do SVD</td></tr>
+  <tr><td><strong>Matriz 4×4 T_final</strong></td><td>Rotação + translação combinadas — converte coordenadas Kinect → Mesa em uma multiplicação</td></tr>
+  <tr><td><strong>T_shift</strong></td><td>Correção de origem: move de "centro da tampa" para "canto da base de madeira" (Z=0)</td></tr>
+  <tr><td><strong>Tsai / Projeção Pinhole</strong></td><td>Modelo que mapeia ponto 3D da mesa → pixel 2D do projetor (inverso da back-projection)</td></tr>
+  <tr><td><strong>Discretização em Grade</strong></td><td>Dividir a mesa em células físicas (~4cm×4cm) e calcular altura média por célula — filtra ruído</td></tr>
+  <tr><td><strong>fillPoly</strong></td><td>Função OpenCV que preenche polígonos — usada para desenhar cada célula da grade</td></tr>
+  <tr><td><strong>bincount</strong></td><td>Função NumPy vetorizada em C para somar por índice — substitui np.add.at na discretização</td></tr>
+  <tr><td><strong>Cache de projeção</strong></td><td>Armazena vértices projetados; só recalcula ao recalibrar — evita recômputo redundante</td></tr>
+  <tr><td><strong>Decimated Read</strong></td><td>Leitura reduzida de GeoTIFF — retorna subamostrado sem carregar o arquivo inteiro</td></tr>
+  <tr><td><strong>GPU</strong></td><td>Processador gráfico dedicado — o projeto <strong>não</strong> requer GPU</td></tr>
+  <tr><td><strong>FPS</strong></td><td>Frames Por Segundo — 22 FPS = lento/entrecortado; 56 FPS = fluido</td></tr>
+  <tr><td><strong>HUD</strong></td><td>Painel de informações sobreposto na tela de controle do operador (nunca na tela de projeção)</td></tr>
+  <tr><td><strong>Python venv</strong></td><td>Ambiente virtual — dependências isoladas por projeto, evita conflitos de versão</td></tr>
+  <tr><td><strong>TDD</strong></td><td>Test-Driven Development — testes escritos antes do código</td></tr>
+</table>
+
+<!-- ===================== PARTE 6 ===================== -->
+<h2>PARTE 6 — ROTEIRO DE DEMONSTRAÇÃO AO VIVO (Slide 16)</h2>
+
+<table>
+  <tr><th>#</th><th>Ação</th><th>Resultado Esperado</th></tr>
+  <tr><td>1</td><td>Executar <code>python main.py</code></td><td>GUI de configuração abre (campos em centímetros)</td></tr>
+  <tr><td>2</td><td>Clicar em INICIAR SIMULAÇÃO</td><td>Duas janelas: Projecao_Areia e Gabarito_MDE</td></tr>
+  <tr><td>3</td><td>Pressionar <strong>C</strong></td><td>Calibração automática (simulação) — grade aparece azul no centro (cubo alvo = +10cm, areia em 0)</td></tr>
+  <tr><td>4</td><td>Arrastar <strong>botão direito</strong> no centro</td><td>Areia sobe — quadrados vão de azul para verde conforme chegam a +10cm</td></tr>
+  <tr><td>5</td><td>Arrastar <strong>botão esquerdo</strong> em área verde</td><td>Areia desce — quadrados vão para vermelho (passou do alvo)</td></tr>
+  <tr><td>6</td><td>Pressionar <strong>M</strong></td><td>Alterna para Morro Gaussiano — padrão de cores muda</td></tr>
+  <tr><td>7</td><td>Pressionar <strong>Q</strong></td><td>Sistema encerra corretamente</td></tr>
+</table>
+
+<div class="bloco-alerta">
+  <div class="bloco-label">⚠ Pontos críticos para não esquecer</div>
+  <ul>
+    <li>Botão <strong>esquerdo</strong> cava · Botão <strong>direito</strong> preenche</li>
+    <li>Mapa padrão é o <strong>Cubo Central</strong> — centro azul, bordas verdes</li>
+    <li>A grade responde imediatamente — demonstra pipeline em tempo real</li>
+    <li>Se travar um pouco ao mover: é esperado — explique que reduzir a grade para 20×15 na GUI resolve</li>
+  </ul>
+</div>
+
+<hr style="margin: 40px 0; border-color: #d0dcea;">
+<p style="text-align: center; color: #888; font-size: 9pt;">
+  Guia gerado para a apresentação SlidesVCPFC.pptx — PFC 2026 — IME<br>
+  Rafael Schuinki · Raquel Belchior · Seção de Simulação AMAN<br>
+  Para converter em PDF: Chrome/Edge → Ctrl+P → "Salvar como PDF"
+</p>
+
+</body>
+</html>

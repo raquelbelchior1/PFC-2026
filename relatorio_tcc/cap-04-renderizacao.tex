@@ -129,9 +129,9 @@ projetados:
 \noindent O traçado é realizado por
 \texttt{cv2.fillPoly(imagem, [quad], cor)}, que é uma rotina
 otimizada nativamente em C++. O custo total de renderização por
-\emph{frame} é, portanto, $O(N_x \cdot N_y)$ chamadas leves a
-\texttt{fillPoly}, em vez dos $\Theta(N)$ pontos individuais da
-abordagem ingênua.
+\emph{frame} é, portanto, proporcional ao número de células da
+malha, $O(N_x \cdot N_y)$, sendo realizada uma chamada a
+\texttt{fillPoly} para cada célula.
 
 \section{Emulador Interativo de Areia}
 \label{sec:emulador}
@@ -149,7 +149,7 @@ frágil por construção. O emulador resolve isso substituindo a captura
 por hardware por uma matriz de alturas persistente, manipulável em
 tempo real pelo \emph{mouse}, que atravessa exatamente o mesmo código
 de discretização, comparação e projeção usado no modo real — nenhuma
-ramificação condicional separa "modo simulação" de "modo real" a
+ramificação condicional separa ``modo simulação'' de ``modo real'' a jusante da captura.
 jusante da captura. Esse é, ao mesmo tempo, o nível mais profundo da
 cadeia de \textit{fallback} do sistema (ativado quando nenhum
 sensor físico é encontrado) e uma ferramenta deliberada de teste

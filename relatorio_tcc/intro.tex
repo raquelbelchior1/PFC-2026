@@ -102,12 +102,13 @@ sensor de profundidade ou do arquivo de terreno?''
 \label{subsec:obj-geral}
 
 Desenvolver um sistema funcional de Caixão de Areia com Realidade
-Aumentada que projete sobre uma caixa física de areia uma
-malha discretizada de quadrados coloridos comparando, célula a
-célula, o relevo medido por um sensor de profundidade com o relevo de
-referência extraído de um arquivo GeoTIFF, e que opere em modalidade
-\emph{plug \& play} com fallback automático para um emulador
-interativo.
+Aumentada que projete, sobre uma caixa física de areia, uma
+malha discretizada de quadrados coloridos, de modo a comparar, célula a 
+célula, o relevo medido por um sensor óptico de profundidade com o relevo
+de referência extraído de um arquivo GeoTIFF. Além disso, o sistema deverá
+operar em modalidade \textit{plug and play}, iniciando automaticamente ao ser conectado
+e, caso seja detectada alguma falha no sensor ou em seus componentes, alternando
+automaticamente para um emulador interativo.
 
 \subsection{Objetivos específicos}
 \label{subsec:obj-especificos}
@@ -145,7 +146,7 @@ interativo.
 
 A contribuição central deste trabalho reside na integração inédita de
 três elementos: (i) o rigor matemático de uma calibração
-geométrica completa (SVD + Gram-Schmidt + Tsai), (ii) a regra
+geométrica completa~\mbox{SVD + Gram-Schmidt + Tsai}, (ii) a regra
 de negócio quantitativa de comparação com tolerância numérica explícita
 contra um MDE oficial, e (iii) uma arquitetura resiliente que
 prioriza a confiabilidade operacional na presença de falhas de hardware

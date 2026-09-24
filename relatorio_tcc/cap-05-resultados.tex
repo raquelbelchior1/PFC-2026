@@ -30,7 +30,7 @@ cresceu ao longo do projeto à medida que novas etapas do
 \textit{pipeline} foram implementadas — da versão inicial com 26 casos
 (cobrindo apenas SVD, Gram-Schmidt, transformação afim, projeção Tsai e
 regra de cor) até a suíte atual, com 83 testes. Para deixar
-explícito \emph{o que} cada teste verifica, a Tabela~\ref{tab:tests}
+explícito o que cada teste verifica, a Tabela~\ref{tab:tests}
 agrupa as 22 classes em cinco frentes funcionais do \textit{pipeline},
 em vez de listá-las na ordem em que aparecem no código-fonte.
 
@@ -913,8 +913,8 @@ A análise da implementação revelou duas causas concorrentes:
           \texttt{numpy.clip} nos índices de célula, colapsando todos
           esses pontos negativos na coluna~0 e na linha~0 da grade —
           isto é, em uma estreita faixa de borda;
-    \item Os parâmetros de projeção do projetor, em modo real, eram
-          valores \textit{mock} de placeholder ($f_x = f_y = 500$,
+    \item Os parâmetros de projeção do projetor, em modo real, que eram valores provisórios
+          utilizados apenas para simulação ($f_x = f_y = 500$,
           $c_x = 320$, $c_y = 240$, $\mathbf{t}_{\text{ext}} = (0,0,1)^{T}$),
           que mapeavam o domínio da mesa para uma sub-região da janela
           em vez de preenchê-la integralmente.
