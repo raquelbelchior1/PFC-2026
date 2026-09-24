@@ -31,7 +31,7 @@ abordagem revelou três deficiências severas:
 \end{enumerate}
 
 A solução proposta substitui a renderização pontual por uma
-\textbf{discretização em malha regular}. Os pontos são agregados em
+discretização em malha regular. Os pontos são agregados em
 células retangulares, cada célula é classificada por uma única cor e
 desenhada como um polígono preenchido via
 \texttt{cv2.fillPoly}.
@@ -107,9 +107,9 @@ $\tau$ (padrão: $\tau = 0{,}02$~m, equivalente a 2~cm):
 \end{cases}
 \end{equation}
 
-\noindent A interpretação operacional é direta: \textbf{Vermelho}
-indica excesso de areia (\emph{cavar}), \textbf{Azul} indica falta
-(\emph{preencher}) e \textbf{Verde} indica conformidade com o MDE
+\noindent A interpretação operacional é direta: vermelho
+indica excesso de areia (\emph{cavar}), azul indica falta
+(\emph{preencher}) e verde indica conformidade com o MDE
 dentro da tolerância (\emph{OK}).
 
 \section{Projeção em Lote e Rasterização}
@@ -151,7 +151,7 @@ tempo real pelo \emph{mouse}, que atravessa exatamente o mesmo código
 de discretização, comparação e projeção usado no modo real — nenhuma
 ramificação condicional separa "modo simulação" de "modo real" a
 jusante da captura. Esse é, ao mesmo tempo, o nível mais profundo da
-\textbf{cadeia de \textit{fallback}} do sistema (ativado quando nenhum
+cadeia de \textit{fallback} do sistema (ativado quando nenhum
 sensor físico é encontrado) e uma ferramenta deliberada de teste
 independente: a Seção~\ref{subsec:fallback} detalha os quatro níveis
 dessa cadeia e o mecanismo mais amplo de resiliência do qual o

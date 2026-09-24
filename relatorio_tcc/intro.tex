@@ -13,9 +13,9 @@ fundamentais para o oficial combatente. A capacidade de visualizar, em três
 dimensões, o relevo de uma região de operações é determinante para o
 planejamento de manobras, o posicionamento de armas de apoio, a escolha de
 itinerários de ataque e a definição de bases de fogo. Tradicionalmente, esse
-treinamento é apoiado por dois recursos complementares: a \textbf{carta
-topográfica em papel}, com curvas de nível, e o \textbf{caixão de areia
-físico}, no qual a turma de instrução modela manualmente o terreno a partir
+treinamento é apoiado por dois recursos complementares: a carta
+topográfica em papel, com curvas de nível, e o caixão de areia
+físico, no qual a turma de instrução modela manualmente o terreno a partir
 da carta para obter uma representação tridimensional tangível.
 
 Embora o caixão de areia seja um instrumento didático consagrado, a
@@ -25,11 +25,11 @@ considerável esforço mental e tempo de instrução. Erros de interpretação
 das curvas de nível resultam em terrenos modelados que divergem da
 realidade cartográfica, comprometendo a fidelidade do exercício.
 
-Os \textbf{caixões de areia com realidade aumentada} — na literatura
+Os caixões de areia com realidade aumentada — na literatura
 internacional, \textit{Augmented Reality Sandboxes} — emergiram, na última
 década, como uma resposta tecnológica a esse problema. Por meio da
-combinação de um \textbf{sensor de profundidade} (tipicamente o
-Microsoft Kinect) com um \textbf{projetor multimídia} suspenso
+combinação de um sensor de profundidade (tipicamente o
+Microsoft Kinect) com um projetor multimídia suspenso
 sobre a caixa, esses sistemas projetam, em tempo real, curvas de nível
 coloridas, escalas batimétricas ou texturas de relevo diretamente sobre a
 superfície da areia. À medida que o operador modifica o relevo — cavando ou
@@ -62,8 +62,8 @@ três limitações dos sistemas existentes restringem sua adoção:
 \end{enumerate}
 
 Este trabalho tem origem em uma demanda operacional concreta: a
-\textbf{Seção de Simulação da Academia Militar das Agulhas Negras (AMAN)}
-mantém, em sua \textbf{Área de Emissão de Ordens Tecnológicas}, um caixão
+Seção de Simulação da Academia Militar das Agulhas Negras (AMAN)
+mantém, em sua Área de Emissão de Ordens Tecnológicas, um caixão
 de areia físico empregado rotineiramente na instrução de leitura de carta
 topográfica, no planejamento de operações e em exercícios de Comando e
 Estado-Maior. Nesse ambiente, o relevo é modelado manualmente pelos
@@ -103,7 +103,7 @@ sensor de profundidade ou do arquivo de terreno?''
 
 Desenvolver um sistema funcional de Caixão de Areia com Realidade
 Aumentada que projete sobre uma caixa física de areia uma
-\textbf{malha discretizada de quadrados coloridos} comparando, célula a
+malha discretizada de quadrados coloridos comparando, célula a
 célula, o relevo medido por um sensor de profundidade com o relevo de
 referência extraído de um arquivo GeoTIFF, e que opere em modalidade
 \emph{plug \& play} com fallback automático para um emulador
@@ -113,8 +113,8 @@ interativo.
 \label{subsec:obj-especificos}
 
 \begin{enumerate}
-    \item Projetar uma arquitetura de software \textbf{monolítica
-          modularizada} de três camadas (Hardware, Lógica, Dados),
+    \item Projetar uma arquitetura de software monolítica
+          modularizada de três camadas (Hardware, Lógica, Dados),
           orquestrada por uma máquina de estados explícita;
     \item Implementar o módulo \texttt{KinectSensor} com mecanismo de
           \textit{cascading fallback} (PyKinect2~$\to$~Open3D~$\to$~freenect~$\to$~Simulação);
@@ -125,15 +125,15 @@ interativo.
     \item Implementar o adaptador \texttt{AdaptadorMDE} para leitura de
           GeoTIFF via \texttt{rasterio} com interpolação bilinear, e
           fallback para superfície gaussiana sintética;
-    \item Implementar discretização espacial em \textbf{malha
-          regular}, com agregação de pontos por célula (filtragem
+    \item Implementar discretização espacial em malha
+          regular, com agregação de pontos por célula (filtragem
           estatística do ruído do sensor) e renderização por
           \texttt{cv2.fillPoly};
-    \item Implementar um \textbf{emulador interativo} controlado por
+    \item Implementar um emulador interativo controlado por
           \textit{mouse} que permita cavar e preencher a areia virtual
           quando o Kinect não estiver disponível;
     \item Validar todo o motor matemático através de uma suíte de
-          \textbf{testes unitários automatizados}, seguindo os
+          testes unitários automatizados, seguindo os
           princípios do \textit{Test-Driven Development} (TDD);
     \item Documentar o projeto em três níveis: documentação oficial
           acadêmica, README de uso prático e relatório de PFC
@@ -144,10 +144,10 @@ interativo.
 \label{sec:contribuicao}
 
 A contribuição central deste trabalho reside na integração inédita de
-três elementos: (i) o \textbf{rigor matemático} de uma calibração
-geométrica completa (SVD + Gram-Schmidt + Tsai), (ii) a \textbf{regra
-de negócio quantitativa} de comparação com tolerância numérica explícita
-contra um MDE oficial, e (iii) uma \textbf{arquitetura resiliente} que
+três elementos: (i) o rigor matemático de uma calibração
+geométrica completa (SVD + Gram-Schmidt + Tsai), (ii) a regra
+de negócio quantitativa de comparação com tolerância numérica explícita
+contra um MDE oficial, e (iii) uma arquitetura resiliente que
 prioriza a confiabilidade operacional na presença de falhas de hardware
 ou de dados. Diferentemente de implementações que utilizam apenas mapas
 de cores qualitativos, o sistema proposto produz uma decisão

@@ -24,9 +24,9 @@ moldura de madeira, o piso ao redor e ruído da sala — pontos que não
 pertencem ao plano de referência e que distorceriam um ajuste de
 mínimos quadrados ingênuo. Por isso a calibração oficial
 (\texttt{main.\_executar\_calibracao}) combina dois métodos em
-sequência: primeiro o \textbf{RANSAC} isola o maior subconjunto de
+sequência: primeiro o RANSAC isola o maior subconjunto de
 pontos coplanares (Seção~\ref{subsec:ransac}); em seguida, o
-\textbf{SVD} refina a normal com precisão sub-milimétrica, mas apenas
+SVD refina a normal com precisão sub-milimétrica, mas apenas
 sobre esse subconjunto de \emph{inliers}.
 
 \subsection{Isolamento de inliers por RANSAC}
@@ -140,8 +140,8 @@ A matriz $T$ acima leva o centroide $\bar{\mathbf{p}}$ do plano
 detectado à origem $(0, 0, 0)$. Entretanto, a convenção interna
 de discretização e renderização (Capítulo~\ref{cap:rendering}) adota a
 mesa como o domínio $[0, L_x] \times [0, L_y] \times [0, h_{\max}]$, com
-a origem $XY$ em um canto e a cota $Z = 0$ fixada na \textbf{base
-de madeira} do caixão (alturas de areia sempre positivas, crescendo
+a origem $XY$ em um canto e a cota $Z = 0$ fixada na base
+de madeira do caixão (alturas de areia sempre positivas, crescendo
 para cima). Sem ajuste em $XY$, metade dos pontos da nuvem (aqueles com
 $x < 0$ ou $y < 0$) seria projetada fora do domínio e colapsada
 pelo \texttt{clip} nas células de borda da grade — um defeito
@@ -149,8 +149,8 @@ observado em ensaio preliminar de campo, no qual a projeção exibia
 apenas um pequeno retângulo correspondente ao quadrante positivo. E sem
 ajuste em $Z$, a cota zero coincidiria com o plano de calibração
 em vez da base do caixão — o que é apenas correto quando esse plano é a
-própria base (modo \textbf{base vazia}), mas não quando ele é a tampa
-apoiada $h_{\max}$ acima dela (modo \textbf{tampa}, oficial).
+própria base (modo base vazia), mas não quando ele é a tampa
+apoiada $h_{\max}$ acima dela (modo tampa, oficial).
 
 A solução, identificada e corrigida durante a fase de validação, é
 compor $T$ com uma translação $T_{\text{shift}}$ que (i) desloca o
@@ -184,7 +184,7 @@ coordenadas $XY$ extrapolem o domínio físico da mesa, o que é típico do
 campo de visão do Kinect montado a 2,5~m (FOV horizontal de
 aproximadamente 70° cobre uma área maior do que a mesa).
 
-Como \textbf{validação de sanidade}, antes de compor $T_{\text{shift}}$
+Como validação de sanidade, antes de compor $T_{\text{shift}}$
 o sistema compara a distância medida sensor–plano ($-\bar{p}_z$, uma
 vez que $Z$ cresce em direção ao sensor no referencial original) com a
 distância informada pelo operador na interface gráfica — a distância ao
@@ -235,12 +235,12 @@ experimental.
 
 Caso a premissa de alinhamento físico não se sustente — projetor
 montado com alguma inclinação residual, por exemplo —, o sistema
-disponibiliza um caminho alternativo de \textbf{estimação empírica} dos
+disponibiliza um caminho alternativo de estimação empírica dos
 parâmetros de Tsai, no qual a etapa de otimização que o artigo original
 de Tsai~\citeonline{tsai1987versatile} descreve é de fato executada. A
 função \texttt{gerar\_imagem\_tabuleiro()} produz um padrão de
 tabuleiro de xadrez com cantos internos em coordenadas conhecidas do
-projetor; essa imagem é projetada \textbf{temporariamente} na janela
+projetor; essa imagem é projetada temporariamente na janela
 \texttt{Projecao\_Areia} sobre a superfície de referência ainda no
 lugar (Seção~\ref{sec:saidas}). Uma câmera RGB captura o tabuleiro
 projetado; \texttt{encontrar\_cantos\_tabuleiro()} localiza os cantos
@@ -261,7 +261,7 @@ alternativo é exercitado pelas classes de teste
 \texttt{TestCalibracaoProjetorOpenCV}, \texttt{TestGeracaoTabuleiro},
 \texttt{TestCantosParaPontosMesa} e
 \texttt{TestPipelineCalibracaoProjetor} (Capítulo~\ref{cap:resultados}),
-mas permanece \textbf{inativo por padrão}: a configuração corrente do
+mas permanece inativo por padrão: a configuração corrente do
 sistema opera com os parâmetros analíticos da
 Equação~\eqref{eq:fxfy-virtual}, reservando a rotina empírica para o
 cenário de montagem não idealizada.
@@ -281,16 +281,16 @@ distâncias de \emph{todos} os pontos, inclusive desses outliers, o que
 distorce sistematicamente a normal calculada. A solução adotada — e
 validada nos ensaios de campo relatados no
 Capítulo~\ref{cap:resultados} — não é substituir o SVD pelo RANSAC, mas
-\textbf{compor os dois}, cada um explorando a etapa em que é mais forte:
+compor os dois, cada um explorando a etapa em que é mais forte:
 
 \begin{itemize}
-    \item O \textbf{RANSAC} (Seção~\ref{subsec:ransac}) é robusto a
+    \item O RANSAC (Seção~\ref{subsec:ransac}) é robusto a
           \textit{outliers} por construção: ele isola o maior
           subconjunto de pontos coplanares antes de qualquer ajuste
           numérico, funcionando mesmo com até $70\,\%$ da nuvem
           ocupada por pontos que não pertencem ao plano de referência
           (limite imposto por \texttt{min\_inliers\_ratio}~$= 0{,}3$);
-    \item O \textbf{SVD}, aplicado apenas sobre os inliers
+    \item O SVD, aplicado apenas sobre os inliers
           selecionados pelo RANSAC, produz o estimador de mínimos
           quadrados \emph{ótimo} para esse subconjunto — mais preciso
           do que o plano obtido a partir de apenas três pontos

@@ -22,14 +22,14 @@ a discussão dos principais \emph{trade-offs} de projeto
 \label{sec:tdd}
 
 A estabilidade matemática do motor foi assegurada pela adoção de
-\textbf{Test-Driven Development} (TDD): cada função do módulo
+Test-Driven Development (TDD): cada função do módulo
 \texttt{motor\_caixao\_areia.py} foi acompanhada por um conjunto de
 testes unitários escritos previamente, com valores numéricos
 \emph{hardcoded} cuja correção é verificável passo a passo. A suíte
 cresceu ao longo do projeto à medida que novas etapas do
 \textit{pipeline} foram implementadas — da versão inicial com 26 casos
 (cobrindo apenas SVD, Gram-Schmidt, transformação afim, projeção Tsai e
-regra de cor) até a suíte atual, com \textbf{83 testes}. Para deixar
+regra de cor) até a suíte atual, com 83 testes. Para deixar
 explícito \emph{o que} cada teste verifica, a Tabela~\ref{tab:tests}
 agrupa as 22 classes em cinco frentes funcionais do \textit{pipeline},
 em vez de listá-las na ordem em que aparecem no código-fonte.
@@ -85,13 +85,13 @@ em vez de listá-las na ordem em que aparecem no código-fonte.
 \end{tabularx}
 \end{table}
 
-\noindent Além da contagem de casos, a \textbf{cobertura de código}
+\noindent Além da contagem de casos, a cobertura de código
 (medida com \texttt{coverage.py} sobre os dois módulos que concentram
 a lógica matemática) confirma que essa suíte exercita a maior parte do
-código de produção: \textbf{91\%} das linhas de
-\texttt{motor\_caixao\_areia.py} e \textbf{48\%} das linhas de
+código de produção: 91\% das linhas de
+\texttt{motor\_caixao\_areia.py} e 48\% das linhas de
 \texttt{mde\_cartografia.py} são executadas durante os testes
-(\textbf{75\%} combinado). A lacuna em \texttt{mde\_cartografia.py}
+(75\% combinado). A lacuna em \texttt{mde\_cartografia.py}
 concentra-se quase inteiramente no método \texttt{\_carregar()}, que lê
 um arquivo GeoTIFF real via \texttt{rasterio} — caminho que a suíte
 atual não exercita: todos os testes usam os mapas sintéticos (Cubo
@@ -121,7 +121,7 @@ do plano horizontal $z = 5$ é resumido como:
 \end{lstlisting}
 
 A execução completa (\texttt{python -m unittest test\_motor\_caixao -v})
-reporta \textbf{83} testes aprovados, nenhuma falha. O único teste
+reporta 83 testes aprovados, nenhuma falha. O único teste
 condicional da suíte, \texttt{TestLeituraRGBD}, é ignorado apenas em
 ambientes sem a biblioteca Open3D instalada; no ambiente de validação
 deste trabalho, Open3D estava presente e o teste foi executado
@@ -132,14 +132,14 @@ normalmente.
 
 Além dos testes unitários por função, a classe
 \texttt{TestFluxoAceitacao} reproduz, com nuvens de profundidade
-sintéticas, o \textbf{procedimento de aceitação físico} usado para
+sintéticas, o procedimento de aceitação físico usado para
 validar o sistema perante a banca: (A) o caixão vazio é calibrado no
 modo tampa; (B) o mapa alvo é o Cubo Central, que pede $+10$~cm no
 terço central da mesa; (C) a base vazia, fora do cubo, deve ser
-projetada em \textbf{verde} (a altura medida coincide com a cota zero
-alvo); (D) o centro, ainda vazio, deve ser projetado em \textbf{azul}
+projetada em verde (a altura medida coincide com a cota zero
+alvo); (D) o centro, ainda vazio, deve ser projetado em azul
 (falta volume); (E) após a inserção de um cubo físico de 10~cm no
-centro, o topo do cubo deve passar a ser projetado em \textbf{verde}, e
+centro, o topo do cubo deve passar a ser projetado em verde, e
 a base ao redor deve permanecer verde. O teste replica exatamente a
 geometria \textit{pinhole} do sensor sintético e o mesmo caminho de
 código do \texttt{main.py} (\texttt{profundidade\_para\_nuvem\_mesa}
@@ -248,8 +248,8 @@ OK
 \subsection{Cobertura de código: quanto do sistema é realmente exercitado}
 \label{subsec:cobertura}
 
-Contar testes prova apenas que a suíte existe; a \textbf{cobertura de
-linhas}, medida com a ferramenta \texttt{coverage.py} instrumentando o
+Contar testes prova apenas que a suíte existe; a cobertura de
+linhas, medida com a ferramenta \texttt{coverage.py} instrumentando o
 interpretador durante a execução da suíte, prova quanto do código de
 produção é de fato exercitado por ela — isto é, quantas linhas
 efetivamente rodam pelo menos uma vez sob teste, e não apenas quantas
@@ -496,19 +496,19 @@ o modo simulação (sem hardware) e o modo real (com sensor Kinect~v2).
 
 \subsection{Modo simulação}
 
-Em modo simulação, a grade de areia virtual nasce \textbf{vazia}
+Em modo simulação, a grade de areia virtual nasce vazia
 ($Z = 0$ em todas as células, coincidindo com a cota zero na base do
 caixão) e é comparada, por padrão, com o mapa sintético
-\textbf{Cubo Central} — um bloco de $+0{,}10$~m de altura ocupando o
+Cubo Central — um bloco de $+0{,}10$~m de altura ocupando o
 terço central da mesa, com $Z = 0$ no restante —, reproduzindo em
 \textit{software} um alvo fisicamente simples de replicar com um cubo
 real durante uma demonstração (Seção~\ref{sec:aceitacao}). No
 \textit{frame} inicial, isso produz:
 
 \begin{itemize}
-    \item Fora do cubo, malha \textbf{verde} (areia em $Z = 0$,
+    \item Fora do cubo, malha verde (areia em $Z = 0$,
           coincidindo com o alvo $Z = 0$ dentro da tolerância $\tau$);
-    \item No terço central, malha \textbf{azul} (areia em $Z = 0$
+    \item No terço central, malha azul (areia em $Z = 0$
           contra o alvo $Z = 0{,}10$~m — falta volume).
 \end{itemize}
 
@@ -518,7 +518,7 @@ virtual —, as células centrais transitam de azul para verde à medida
 que a altura se aproxima de $0{,}10$~m. O critério de \emph{conclusão}
 do exercício é a obtenção de uma malha integralmente verde, indicando
 que a areia virtual replica fielmente o MDE. O mapa alternativo
-\textbf{Morro Gaussiano} (pico suave no centro, decaindo às bordas)
+Morro Gaussiano (pico suave no centro, decaindo às bordas)
 permanece disponível na GUI para demonstrações que prefiram um relevo
 contínuo em vez de um platô.
 
@@ -552,7 +552,7 @@ em um estágio intermediário de modelagem — verde (correto), azul
 
 A taxa de quadros medida em uma máquina típica de desenvolvimento
 (Intel i5 de oitava geração, 8~GiB de RAM, sem GPU dedicada) supera
-\textbf{30~fps} de forma consistente, resposta mais que suficiente
+30~fps de forma consistente, resposta mais que suficiente
 para interação humana fluida.
 
 \subsection{Modo real}

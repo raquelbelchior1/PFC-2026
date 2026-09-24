@@ -77,12 +77,12 @@ Z = \frac{d_{\text{mm}}}{1000},
 
 O Microsoft Kinect~v2 foi descontinuado pela fabricante em 2015, o que
 motiva a avaliação de sensores substitutos para a continuidade da linha
-de pesquisa. O \textbf{Azure Kinect DK}, sucessor direto lançado em
+de pesquisa. O Azure Kinect DK, sucessor direto lançado em
 2019, mantém o princípio \textit{Time-of-Flight} da versão~v2, porém com
 maior resolução de profundidade ($1024 \times 1024$ no modo
 \textit{narrow field of view}) e uma unidade de medição inercial (IMU)
 integrada, útil para compensar pequenas oscilações do suporte do sensor.
-A família \textbf{Intel RealSense} (modelos D400), por sua vez, emprega
+A família Intel RealSense (modelos D400), por sua vez, emprega
 visão estéreo ativa: um par de câmeras infravermelhas associado
 a um projetor de padrão estrutural estima a profundidade por
 triangulação, dispensando o cálculo de fase do \textit{Time-of-Flight} e
@@ -109,7 +109,7 @@ O sensor apresenta ruído gaussiano cujo desvio padrão cresce
 quadraticamente com a profundidade. Na faixa de operação adotada
 (2--3~m, com o sensor a 2,5~m da mesa), valores típicos situam-se entre
 $\sigma \approx 2$ e $\sigma \approx 4$~mm por \textit{pixel}. Esse
-ruído justifica a estratégia de \textbf{agregação espacial}
+ruído justifica a estratégia de agregação espacial
 (Capítulo~\ref{cap:rendering}): ao se calcular a média de $n$ pontos por
 célula da malha, o desvio padrão do estimador da altura é reduzido
 para $\sigma_{\bar{Z}} = \sigma / \sqrt{n}$, conforme o
@@ -133,13 +133,13 @@ K \cdot
 K = \begin{bmatrix} f_x & 0 & c_x \\ 0 & f_y & c_y \\ 0 & 0 & 1 \end{bmatrix},
 \end{equation}
 
-\noindent onde $K$ é a \textbf{matriz intrínseca} do dispositivo (câmera ou
+\noindent onde $K$ é a matriz intrínseca do dispositivo (câmera ou
 projetor), $R_{\text{ext}}$ e $\mathbf{t}_{\text{ext}}$ formam a
-\textbf{matriz extrínseca} (rotação e translação do referencial mundo
+matriz extrínseca (rotação e translação do referencial mundo
 para o referencial do dispositivo) e $s$ é um fator de escala não nulo.
 
 O modelo de Tsai~\citeonline{tsai1987versatile} estende o
-\textit{pinhole} canônico com a inclusão de \textbf{distorções óticas}
+\textit{pinhole} canônico com a inclusão de distorções óticas
 radiais (coeficientes $k_1, k_2, k_3$) e tangenciais ($p_1, p_2$),
 fornecendo precisão sub-pixel para câmeras e projetores reais. A
 biblioteca OpenCV~\cite{bradski2008opencv} implementa esse modelo
@@ -170,7 +170,7 @@ do plano que melhor se ajusta à nuvem de pontos centralizada
 \label{subsec:ransac}
 
 O ajuste de plano por SVD (Seção~\ref{subsec:svd}) é um estimador de
-\textbf{mínimos quadrados}: minimiza a soma dos quadrados das distâncias
+mínimos quadrados: minimiza a soma dos quadrados das distâncias
 de \emph{todos} os pontos da nuvem ao plano, e por isso é sensível a
 \textit{outliers} — pontos que não pertencem à superfície de interesse.
 No caso de campo deste trabalho, o campo de visão do Kinect é mais largo
@@ -179,13 +179,13 @@ a calibração inclui, além da superfície de referência, a moldura de
 madeira do caixão, o piso ao redor e ruído da sala — outliers que, se
 incluídos ingenuamente no SVD, distorcem a normal calculada.
 
-O algoritmo \textbf{RANSAC} (\textit{Random Sample Consensus}), proposto
+O algoritmo RANSAC (\textit{Random Sample Consensus}), proposto
 por Fischler e Bolles~\citeonline{fischler1981random}, resolve esse problema por
 amostragem aleatória repetida. Dada uma nuvem de $N$ pontos, cada
 iteração executa três passos: (i) sorteiam-se $k$ pontos mínimos
 necessários para definir o modelo — no caso de um plano, $k = 3$; (ii)
 constrói-se o modelo candidato a partir desses pontos; (iii) conta-se o
-número de \textbf{inliers} — pontos da nuvem inteira cuja distância ao
+número de inliers — pontos da nuvem inteira cuja distância ao
 modelo candidato é inferior a um limiar $d_{\text{in}}$. Após um número
 fixo de iterações, o modelo com maior número de inliers é escolhido como
 vencedor. Diferentemente do SVD, o RANSAC não assume que a maioria dos
@@ -194,7 +194,7 @@ pontos seja bem descrita por um único modelo suave; ele explicitamente
 significativas de dados espúrios, desde que o conjunto de inliers
 permaneça majoritário dentro da amostra observada.
 
-Neste trabalho, o RANSAC não substitui o SVD, mas o \textbf{precede}: o
+Neste trabalho, o RANSAC não substitui o SVD, mas o precede: o
 plano vencedor do RANSAC delimita o conjunto de inliers (presumivelmente
 a superfície de referência plana), e apenas esses pontos alimentam o
 refinamento por mínimos quadrados via SVD, que produz a normal final com
@@ -236,14 +236,14 @@ discutido na Seção~\ref{subsec:T-shift}.
 \section{Modelos Digitais de Elevação e o Formato GeoTIFF}
 \label{sec:mde}
 
-Um \textbf{Modelo Digital de Elevação} (MDE) é uma representação
+Um Modelo Digital de Elevação (MDE) é uma representação
 matricial discreta da altimetria de uma região, na qual cada \emph{pixel}
 codifica a elevação $Z$ correspondente a uma coordenada geográfica
 $(X, Y)$~\cite{li2005digital}. MDEs constituem produto de saída
 fundamental da Geomática e são amplamente empregados em planejamento
 militar, hidrografia, agricultura de precisão e simulação ambiental.
 
-O formato \textbf{GeoTIFF}~\cite{geotiff} é um padrão aberto que
+O formato GeoTIFF~\cite{geotiff} é um padrão aberto que
 estende o tradicional \texttt{TIFF} com metadados de georreferenciamento:
 sistema de coordenadas, \emph{datum}, projeção cartográfica e
 transformação afim que mapeia índices de \emph{pixel} para coordenadas
@@ -251,5 +251,5 @@ do mundo. A leitura programática do formato em Python é realizada pela
 biblioteca \texttt{rasterio}~\cite{rasterio}, que retorna um arranjo
 NumPy associado a metadados consultáveis. A consulta da elevação em
 coordenadas arbitrárias entre os pixels é tratada neste trabalho por
-\textbf{interpolação bilinear}, implementada na classe
+interpolação bilinear, implementada na classe
 \texttt{scipy.interpolate.RegularGridInterpolator}~\cite{scipy}.

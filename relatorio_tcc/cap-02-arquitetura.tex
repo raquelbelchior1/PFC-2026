@@ -16,7 +16,7 @@ seções: a justificativa do estilo arquitetural adotado
 \section{Estilo Arquitetural: Monolítico Modularizado}
 \label{sec:estilo}
 
-A arquitetura adotada é \textbf{monolítica modularizada}: todos os
+A arquitetura adotada é monolítica modularizada: todos os
 módulos executam dentro de um único processo Python, comunicando-se por
 chamada direta de função. A escolha foi norteada por três requisitos do
 domínio:
@@ -46,7 +46,7 @@ presença de pessoal com formação em desenvolvimento de \textit{software}
 capaz de configurar um ambiente Python do zero, tampouco conectividade
 constante à internet para \texttt{pip install}. Para eliminar essa
 barreira de adoção, o projeto inclui, na pasta \texttt{installer/} do
-repositório (Anexo~A), um instalador único e \textbf{100\% offline}
+repositório (Anexo~A), um instalador único e 100\% offline
 para Windows 10/11 de 64~\textit{bits}, gerado com o
 Inno~Setup a partir do script \texttt{ARSandbox.iss}. Em uma
 máquina limpa, sem qualquer pré-requisito além do próprio Windows, o
@@ -74,8 +74,8 @@ instalador executa automaticamente, em sequência:
           desenvolvimento;
     \item Executa um teste de fumaça dos módulos importados, registrando
           o resultado em um arquivo de \emph{log}, e cria os atalhos
-          \textbf{AR Sandbox} e \textbf{AR Sandbox --- Diagnóstico do
-          Kinect} no Menu Iniciar.
+          ``AR Sandbox'' e ``AR Sandbox --- Diagnóstico do
+          Kinect'' no Menu Iniciar.
 \end{enumerate}
 
 \noindent O resultado é que um instrutor da Seção de Simulação da AMAN,
@@ -174,19 +174,19 @@ Figura~\ref{fig:fsm} ilustra o diagrama de estados.
 \section{Saídas Visuais}
 \label{sec:saidas}
 
-O sistema apresenta ao operador \textbf{duas janelas OpenCV}
+O sistema apresenta ao operador duas janelas OpenCV
 simultâneas, com propósitos distintos e complementares:
 
 \begin{description}
-    \item[\texttt{Projecao\_Areia}.] Destinada ao \textbf{projetor}
+    \item[\texttt{Projecao\_Areia}.] Destinada ao projetor
           físico suspenso sobre a mesa: exibe exclusivamente a malha
           contínua de quadrados coloridos (vermelho/azul/verde) que
           constitui o \emph{feedback} operacional. Nenhum texto ou
           elemento de interface é desenhado sobre essa janela durante a
           operação normal, para não contaminar a projeção sobre a
           areia.
-    \item[\texttt{Gabarito\_MDE}.] Janela de \textbf{controle do
-          operador}, exibida no monitor do computador (não no
+    \item[\texttt{Gabarito\_MDE}.] Janela de controle do
+          operador, exibida no monitor do computador (não no
           projetor). Mostra o \emph{heatmap} do MDE de referência que
           está sendo replicado, sobreposto a um HUD (\emph{Heads-Up
           Display}) semitransparente com a legenda de cores, o estado
@@ -210,9 +210,9 @@ inicial de zoom do projetor.}
 
 Durante a etapa opcional de calibração empírica do projetor
 (via \texttt{calibrar\_projetor}, Seção~\ref{subsec:calib-empirica-projetor}), a janela
-\texttt{Projecao\_Areia} deixa \textbf{temporariamente} de exibir a
-malha de cores e passa a projetar um \textbf{padrão de tabuleiro de
-xadrez} (\texttt{gerar\_imagem\_tabuleiro}) sobre a superfície de
+\texttt{Projecao\_Areia} deixa temporariamente de exibir a
+malha de cores e passa a projetar um padrão de tabuleiro de
+xadrez (\texttt{gerar\_imagem\_tabuleiro}) sobre a superfície de
 referência. Essa saída é usada apenas enquanto dura a rotina de
 calibração: uma câmera captura o tabuleiro projetado, a função
 \texttt{encontrar\_cantos\_tabuleiro} detecta os cantos internos na
@@ -225,8 +225,8 @@ durante essa etapa, permitindo ao operador corrigir o chute inicial da
 distância focal caso a otimização convirja para um mínimo local
 incorreto. Encerrada a calibração — com sucesso ou por cancelamento —,
 a janela \texttt{Projecao\_Areia} volta a exibir exclusivamente a
-malha de cores. Este é, portanto, um mecanismo de \textbf{depuração e
-calibração assistida}, e não uma saída destinada ao uso operacional
+malha de cores. Este é, portanto, um mecanismo de depuração e
+calibração assistida, e não uma saída destinada ao uso operacional
 corrente do sistema; na configuração padrão, o sistema opera com os
 parâmetros de projeção obtidos analiticamente
 (Seção~\ref{sec:passo4}), e a rotina de tabuleiro permanece disponível
@@ -263,7 +263,7 @@ Observer (Callback) & \texttt{main.py}      & Eventos de \emph{mouse} desacoplad
           \texttt{capturar\_nuvem()}, encapsulando um algoritmo de
           aquisição intercambiável — a essência do padrão
           \textit{Strategy}. A particularidade deste projeto é compor
-          o \textit{Strategy} com uma \textbf{cadeia de fallback}
+          o \textit{Strategy} com uma cadeia de fallback
           (Seção~\ref{subsec:fallback}): em vez de o cliente escolher
           explicitamente a estratégia, o próprio construtor de
           \texttt{KinectSensor} tenta cada uma em ordem de preferência
